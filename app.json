@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "PathSala",
+    "slug": "pathsala",
+    "scheme": "pathsala",
+    "icon": "./assets/logo.png",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "plugins": [
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PathSala needs photo access so you can attach and solve questions from your gallery.",
+          "cameraPermission": "PathSala needs camera access so you can capture and solve questions from a photo.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.anonymous.pathsala",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#ffffff"
+      }
+    }
+  }
+}
