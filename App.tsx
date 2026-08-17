@@ -33,7 +33,9 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Pause,
   PieChart,
+  Play,
   Plus,
   Send,
   ShieldCheck,
@@ -258,7 +260,7 @@ const copy = {
   },
 } as const;
 
-const gradeOptions = ['4', '5', '6', '7', '8', '9', '10'];
+const gradeOptions = ['9', '10'];
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
 const toNativePath = (path: string) => (path.startsWith('file://') ? path.replace('file://', '') : path);
@@ -3137,7 +3139,7 @@ export default function App() {
   const resolvedModelPathRef = useRef<string | null>(null);
   const modelBindingPromiseRef = useRef<Promise<boolean> | null>(null);
   const ui = copy[language];
-  const subjects = useMemo(() => getSubjectCatalog(user?.grade ?? grade ?? '4', language), [user?.grade, grade, language]);
+  const subjects = useMemo(() => getSubjectCatalog(user?.grade ?? grade ?? '10', language), [user?.grade, grade, language]);
   const detectedSubjectId = useMemo(() => detectSubjectId(sessions, subjects), [sessions, subjects]);
   const activeSubject =
     subjects.find((subject) => subject.id === selectedSubjectId) ??
@@ -3149,17 +3151,17 @@ export default function App() {
   }, [sessions, activeSessionId]);
   const dailyStreak = useMemo(() => calculateDailyStreak(sessions), [sessions]);
   const defaultQuiz = useMemo(
-    () => buildQuizQuestion(language, user?.grade ?? grade ?? '4', activeSubject, quizVersion),
+    () => buildQuizQuestion(language, user?.grade ?? grade ?? '10', activeSubject, quizVersion),
     [language, user?.grade, grade, activeSubject, quizVersion]
   );
   const quiz = generatedQuiz ?? defaultQuiz;
   const studyPlan = useMemo(
-    () => buildStudyPlan(language, user?.grade ?? grade ?? '4', activeSubject),
+    () => buildStudyPlan(language, user?.grade ?? grade ?? '10', activeSubject),
     [language, user?.grade, grade, activeSubject]
   );
   const hasBoundModel = isModelReady && Boolean(resolvedModelPath);
 
-  const [isDownloadingModel, setIsDownloadingModel] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'paused' | 'done'>('idle');
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadProgressText, setDownloadProgressText] = useState('');
   const downloadResumableRef = useRef<FileSystem.DownloadResumable | null>(null);
@@ -3169,11 +3171,101 @@ export default function App() {
   const [resourcesProgressText, setResourcesProgressText] = useState('');
   const [isResourcesDownloaded, setIsResourcesDownloaded] = useState(false);
 
-  const isModelDownloaded = Boolean(isModelReady && resolvedModelPath);
+  const isDownloadingModel = downloadStatus === 'downloading';
+  const isPausedModel = downloadStatus === 'paused';
+  const isModelDownloaded = Boolean((isModelReady && resolvedModelPath) || downloadStatus === 'done');
+
+  const pauseModelDownload = async () => {
+    try {
+      if (downloadResumableRef.current) {
+        const snapshot = await downloadResumableRef.current.pauseAsync();
+        await AsyncStorage.setItem('@guru_download_snapshot', JSON.stringify(snapshot));
+        setDownloadStatus('paused');
+        setDownloadProgressText('Download paused. Tap Resume anytime.');
+      }
+    } catch (e) {
+      console.warn('Pause download error', e);
+    }
+  };
+
+  const resumeModelDownload = async () => {
+    try {
+      setDownloadStatus('downloading');
+      setDownloadProgressText('Resuming model download...');
+
+      if (downloadResumableRef.current) {
+        const result = await downloadResumableRef.current.resumeAsync();
+        if (result?.uri) {
+          setDownloadStatus('done');
+          setDownloadProgress(1);
+          setDownloadProgressText('Model ready!');
+          await bindNativeModelPath(result.uri, 'Downloaded Model', 'gemma-4-E2B-it.litertlm');
+          await AsyncStorage.removeItem('@guru_download_snapshot');
+          return true;
+        }
+      } else {
+        const savedSnapshot = await AsyncStorage.getItem('@guru_download_snapshot');
+        if (savedSnapshot) {
+          const parsed = JSON.parse(savedSnapshot);
+          let lastTime = Date.now();
+          let lastBytes = 0;
+
+          const resumable = new FileSystem.DownloadResumable(
+            parsed.url,
+            parsed.fileUri,
+            parsed.options,
+            (downloadProgressData) => {
+              const total = downloadProgressData.totalBytesExpectedToWrite;
+              const written = downloadProgressData.totalBytesWritten;
+              if (total > 0) {
+                const ratio = written / total;
+                setDownloadProgress(ratio);
+
+                const currentTime = Date.now();
+                const timeDiffSec = (currentTime - lastTime) / 1000;
+                let speedText = '';
+                if (timeDiffSec >= 1) {
+                  const bytesDiff = written - lastBytes;
+                  const speedMb = (bytesDiff / (1024 * 1024)) / timeDiffSec;
+                  speedText = ` · ${speedMb.toFixed(1)} MB/s`;
+                  lastTime = currentTime;
+                  lastBytes = written;
+                }
+
+                const writtenMb = (written / (1024 * 1024)).toFixed(0);
+                const totalMb = (total / (1024 * 1024)).toFixed(0);
+                setDownloadProgressText(`${writtenMb} MB / ${totalMb} MB (${Math.round(ratio * 100)}%)${speedText}`);
+              }
+            },
+            parsed.resumeData
+          );
+
+          downloadResumableRef.current = resumable;
+          const result = await resumable.resumeAsync();
+          if (result?.uri) {
+            setDownloadStatus('done');
+            setDownloadProgress(1);
+            setDownloadProgressText('Model ready!');
+            await bindNativeModelPath(result.uri, 'Downloaded Model', 'gemma-4-E2B-it.litertlm');
+            await AsyncStorage.removeItem('@guru_download_snapshot');
+            return true;
+          }
+        } else {
+          return await startModelDownload();
+        }
+      }
+      return false;
+    } catch (e: any) {
+      console.warn('Resume error', e);
+      setDownloadStatus('paused');
+      setDownloadProgressText('Paused. Tap Resume to continue.');
+      return false;
+    }
+  };
 
   const startModelDownload = async () => {
     try {
-      setIsDownloadingModel(true);
+      setDownloadStatus('downloading');
       setDownloadProgress(0);
       setDownloadProgressText('Connecting to Hugging Face...');
 
@@ -3222,30 +3314,30 @@ export default function App() {
       const result = await downloadResumable.downloadAsync();
 
       if (result?.uri) {
+        setDownloadStatus('done');
         setDownloadProgress(1);
         setDownloadProgressText('Model downloaded!');
         await bindNativeModelPath(result.uri, 'Downloaded Model', 'gemma-4-E2B-it.litertlm');
+        await AsyncStorage.removeItem('@guru_download_snapshot');
         return true;
       }
       return false;
     } catch (error: any) {
       console.error('Model download error:', error);
+      setDownloadStatus('paused');
       Alert.alert(
         'Download Interrupted',
-        error?.message || 'Could not complete model download. Check internet connection and try again.'
+        error?.message || 'Could not complete model download. Check internet connection and tap Resume.'
       );
       return false;
-    } finally {
-      setIsDownloadingModel(false);
-      downloadResumableRef.current = null;
     }
   };
 
   const startResourcesDownload = async () => {
     try {
       setIsDownloadingResources(true);
-      setResourcesProgress(0);
-      setResourcesProgressText('Setting up Grade 10 syllabus...');
+      setResourcesProgress(0.1);
+      setResourcesProgressText('Setting up Grade 10 CDC Resource Library...');
 
       const resDir = `${FileSystem.documentDirectory}grade10-resources/`;
       const dirInfo = await FileSystem.getInfoAsync(resDir);
@@ -3253,11 +3345,19 @@ export default function App() {
         await FileSystem.makeDirectoryAsync(resDir, { intermediates: true });
       }
 
-      const subjects = ['Science', 'Maths', 'Social', 'Nepali', 'English', 'Optional Math'];
+      const subjects = [
+        'Science & Technology',
+        'Compulsory Mathematics',
+        'Social Studies',
+        'Nepali Literature',
+        'English CDC Final',
+        'Optional Mathematics'
+      ];
+
       for (let i = 0; i < subjects.length; i++) {
         setResourcesProgress((i + 1) / subjects.length);
-        setResourcesProgressText(`Installed ${subjects[i]} CDC set...`);
-        await new Promise((r) => setTimeout(r, 300));
+        setResourcesProgressText(`Installed ${subjects[i]} (${i + 1}/${subjects.length})`);
+        await new Promise((r) => setTimeout(r, 120));
       }
 
       setIsResourcesDownloaded(true);
@@ -3276,14 +3376,19 @@ export default function App() {
   const downloadAllResourcesFlow = async () => {
     let ok1 = isModelDownloaded;
     if (!ok1) {
-      ok1 = await startModelDownload();
+      if (isPausedModel) {
+        ok1 = await resumeModelDownload();
+      } else {
+        ok1 = await startModelDownload();
+      }
     }
+
     let ok2 = isResourcesDownloaded;
     if (!ok2) {
       ok2 = await startResourcesDownload();
     }
 
-    if (ok1 || ok2) {
+    if (ok1 && ok2) {
       Alert.alert(
         'Offline Resources Ready',
         'All essential resources have been downloaded! Guru is now 100% offline and ready.',
@@ -4873,32 +4978,48 @@ const formatDeterministicMathResponseStable = (text: string) => {
             </View>
           )}
 
-          {/* Main Action Button */}
-          <TouchableOpacity
-            style={[styles.bigDownloadButton, (isDownloadingModel || isDownloadingResources) && styles.bigDownloadButtonActive]}
-            onPress={async () => {
-              if (isAllReady) {
-                setScreen(user ? 'main' : 'onboarding');
-                return;
-              }
-              await downloadAllResourcesFlow();
-            }}
-            disabled={isDownloadingModel || isDownloadingResources}
-          >
-            {isAllReady ? (
-              <Text style={styles.bigDownloadButtonText}>Continue to Guru</Text>
-            ) : (isDownloadingModel || isDownloadingResources) ? (
-              <View style={styles.buttonBusyRow}>
-                <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.bigDownloadButtonText}>Downloading Resources...</Text>
+          {/* Main Action Buttons with Pause / Resume */}
+          {isDownloadingModel ? (
+            <View style={styles.downloadRunningActionsRow}>
+              <View style={[styles.bigDownloadButton, styles.bigDownloadButtonActive, { flex: 1, marginRight: 8, marginTop: 10, marginBottom: 10 }]}>
+                <View style={styles.buttonBusyRow}>
+                  <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
+                  <Text style={styles.bigDownloadButtonText}>Downloading ({Math.round(downloadProgress * 100)}%)...</Text>
+                </View>
               </View>
-            ) : (
+              <TouchableOpacity style={styles.pauseDownloadSquareButton} onPress={pauseModelDownload}>
+                <Pause size={18} color="#ffffff" style={{ marginRight: 4 }} />
+                <Text style={styles.pauseDownloadSquareButtonText}>Pause</Text>
+              </TouchableOpacity>
+            </View>
+          ) : isPausedModel ? (
+            <TouchableOpacity style={styles.bigDownloadButton} onPress={resumeModelDownload}>
               <View style={styles.buttonBusyRow}>
-                <Download size={20} color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.bigDownloadButtonText}>Download</Text>
+                <Play size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.bigDownloadButtonText}>Resume Download ({Math.round(downloadProgress * 100)}%)</Text>
               </View>
-            )}
-          </TouchableOpacity>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.bigDownloadButton}
+              onPress={async () => {
+                if (isAllReady) {
+                  setScreen(user ? 'main' : 'onboarding');
+                  return;
+                }
+                await downloadAllResourcesFlow();
+              }}
+            >
+              {isAllReady ? (
+                <Text style={styles.bigDownloadButtonText}>Continue to Guru</Text>
+              ) : (
+                <View style={styles.buttonBusyRow}>
+                  <Download size={20} color="#ffffff" style={{ marginRight: 8 }} />
+                  <Text style={styles.bigDownloadButtonText}>Download</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
 
           {/* Secondary helper button */}
           <TouchableOpacity
@@ -6630,6 +6751,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  downloadRunningActionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  pauseDownloadSquareButton: {
+    backgroundColor: '#dc2626',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  pauseDownloadSquareButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   skipOrPickButton: {
     paddingVertical: 8,
