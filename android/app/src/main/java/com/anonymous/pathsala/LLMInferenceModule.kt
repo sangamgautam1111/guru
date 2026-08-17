@@ -168,25 +168,6 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             .emit(eventName, payload)
     }
 
-    private fun buildSystemInstruction(language: String, isMathRequest: Boolean): String {
-        val langInstruction = if (language.equals("NE", ignoreCase = true)) {
-            "Answer in Nepali."
-        } else {
-            "Answer in English."
-        }
-
-        return if (isMathRequest) {
-            "You are Guru, an educational AI tutor for school students in Nepal. $langInstruction Solve the problem clearly step-by-step."
-        } else {
-            "You are Guru, a helpful and friendly educational AI tutor for school students in Nepal. $langInstruction Explain clearly and concisely."
-        }
-    }
-
-    /**
-     * Balanced sampling parameters for base instruction-tuned Gemma 4:
-     * - Math requests use temperature 0.2 with Top-K 20 for focused, accurate calculations.
-     * - General Nepali/English queries use temperature 0.6 with Top-K 40 for natural, fluent tutoring without repetitive token loops.
-     */
     private fun createSamplerConfig(language: String, isMathRequest: Boolean): SamplerConfig {
         return when {
             isMathRequest -> SamplerConfig(
@@ -212,10 +193,6 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         }
     }
 
-    /**
-     * LiteRT-LM streaming callbacks can sometimes output cumulative or overlapping string chunks.
-     * This function detects character-level overlaps and merges incoming tokens seamlessly.
-     */
     private fun mergeChunk(currentText: String, nextChunk: String): String {
         if (nextChunk.isBlank()) return currentText
         if (currentText.isBlank()) return nextChunk
@@ -232,26 +209,53 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         return currentText + nextChunk
     }
 
+    /**
+     * Official Gemma Instruction-Tuning Chat Template.
+     * Gemma requires explicit turn boundaries to know when user input ends and model output begins.
+     * Without these tokens, the base model hallucinates synthetic multi-turn dialogues.
+     */
     private fun buildEffectivePrompt(prompt: String, language: String, isMathRequest: Boolean, history: ReadableArray): String {
-        val conversation = createPromptWithHistory(prompt, history)
-        return listOf(
-            buildSystemInstruction(language, isMathRequest),
-            "Use the conversation below as memory. The latest User message is the main question. Earlier messages are context only, unless the latest message is clearly a follow-up.",
-            conversation,
-            "Assistant:"
-        ).joinToString("\n\n").trim()
+        val sb = StringBuilder()
+        val startIndex = maxOf(0, history.size() - maxHistoryMessages)
+
+        for (index in startIndex until history.size()) {
+            val item = history.getMap(index) ?: continue
+            val text = item.getString("text")?.trim().orEmpty()
+            if (text.isBlank()) continue
+
+            val isUser = item.getBoolean("isUser")
+            if (isUser) {
+                sb.append("<start_of_turn>user\n").append(text).append("<end_of_turn>\n")
+            } else {
+                sb.append("<start_of_turn>model\n").append(text).append("<end_of_turn>\n")
+            }
+        }
+
+        sb.append("<start_of_turn>user\n").append(prompt.trim()).append("<end_of_turn>\n")
+        sb.append("<start_of_turn>model\n")
+        return sb.toString()
     }
 
     /**
-     * Cleans up unwanted markdown artifacts, duplicate headings, or redundant "Check:" lines before showing the user.
+     * Cleans up unwanted markdown artifacts, turn tags, or redundant headings before showing the user.
      */
     private fun sanitizeFinalOutput(text: String, isMathRequest: Boolean): String {
-        val trimmed = text.trim()
-        if (trimmed.isBlank()) {
-            return trimmed
+        var cleaned = text
+            .replace("<start_of_turn>user", "")
+            .replace("<start_of_turn>model", "")
+            .replace("<end_of_turn>", "")
+            .replace("<start_of_turn>", "")
+            .trim()
+
+        val stopTokens = listOf("\nUser:", "\nAssistant:", "User: ", "Assistant: ")
+        for (stop in stopTokens) {
+            val idx = cleaned.indexOf(stop)
+            if (idx != -1) {
+                cleaned = cleaned.substring(0, idx).trim()
+            }
         }
 
-        val lines = trimmed.lines()
+        val lines = cleaned.lines()
         val cleanedLines = mutableListOf<String>()
         var checkSeen = false
         var previousNormalized = ""
@@ -699,6 +703,26 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
 
                         synchronized(responseBuilder) {
                             val mergedText = mergeChunk(responseBuilder.toString(), response)
+
+                            // Detect Gemma turn boundaries or synthetic dialogue turns and stop immediately
+                            val stopTokens = listOf("<end_of_turn>", "<start_of_turn>", "\nUser:", "\nAssistant:", "User: ", "Assistant: ")
+                            for (stop in stopTokens) {
+                                val idx = mergedText.indexOf(stop)
+                                if (idx != -1) {
+                                    val cleanText = mergedText.substring(0, idx).trim()
+                                    loopGuardTriggered.set(true)
+                                    responseBuilder.clear()
+                                    responseBuilder.append(cleanText)
+                                    emitGenerationEvent(chunkEvent, requestId, cleanText)
+                                    try {
+                                        localSession?.cancelProcess()
+                                    } catch (e: Exception) {
+                                        Log.w(tag, "Turn stop cancel failed", e)
+                                    }
+                                    finishSuccess(cleanText)
+                                    return
+                                }
+                            }
 
                             if (hasRunawayRepetition(mergedText)) {
                                 val stableText = responseBuilder.toString().ifBlank { mergedText }.trim()
