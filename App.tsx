@@ -36,6 +36,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react-native';
+import { buildConditionedPrompt } from './src/services/curriculum/CurriculumService';
 
 type Language = 'EN' | 'NE';
 type ScreenState = 'onboarding' | 'main';
@@ -2080,10 +2081,24 @@ const buildTextAttachmentQuestion = (question: string, fileName: string, content
   ].join('\n');
 };
 
-const buildModelPrompt = (question: string, _language: Language, _grade: string, _subject: SubjectFocus, _hasAttachment: boolean) => {
-  // The native layer already adds the full tutor instruction.
-  // Keeping this prompt short leaves more room for the student's question.
-  return question.trim();
+const buildModelPrompt = (
+  question: string,
+  language: Language,
+  grade: string,
+  subject: SubjectFocus,
+  hasAttachment: boolean
+) => {
+  // Uses local CDC curriculum matching to inject grade-specific guidelines (Grade 9 vs Grade 10 SEE)
+  // and relevant syllabus formulas/definitions without exceeding mobile memory budgets.
+  const { conditionedPrompt } = buildConditionedPrompt({
+    question,
+    grade,
+    subjectId: subject?.id,
+    language,
+    hasAttachment,
+  });
+
+  return conditionedPrompt;
 };
 
 const getLatestAssistantMessage = (sessions: ChatSession[]) => {
