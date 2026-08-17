@@ -24,6 +24,7 @@ import {
   BookOpen,
   BrainCircuit,
   ChevronDown,
+  Download,
   FileText,
   Globe,
   Home,
@@ -2136,6 +2137,7 @@ const getQuizContextKey = (language: Language, grade: string, subject: SubjectFo
 const normalizeTutorTextBase = (text: string) => {
   const pathSalaToken = '__PATHSALA_BRAND__';
   let cleaned = stripReasoningPrefix(text)
+    .replace(/<[^>]+>/g, '') // Strip all Gemma <start_of_turn>, <end_of_turn>, etc.
     .replace(/\r/g, '\n')
     .replace(/\u2581/g, ' ')
     .replace(/\bpaath\s*\.?\s*sala\b/gi, pathSalaToken)
@@ -3151,6 +3153,93 @@ export default function App() {
     [language, user?.grade, grade, activeSubject]
   );
   const hasBoundModel = isModelReady && Boolean(resolvedModelPath);
+
+  const [isDownloadingModel, setIsDownloadingModel] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadProgressText, setDownloadProgressText] = useState('');
+  const downloadResumableRef = useRef<FileSystem.DownloadResumable | null>(null);
+
+  const startModelDownload = async () => {
+    try {
+      setIsDownloadingModel(true);
+      setDownloadProgress(0);
+      setDownloadProgressText('Connecting to Hugging Face...');
+
+      const modelDir = `${FileSystem.documentDirectory}pathsala-models/`;
+      const dirInfo = await FileSystem.getInfoAsync(modelDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(modelDir, { intermediates: true });
+      }
+
+      const targetPath = `${modelDir}gemma-4-E2B-it.litertlm`;
+      const downloadUrl = 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm';
+
+      let lastTime = Date.now();
+      let lastBytes = 0;
+
+      const downloadResumable = FileSystem.createDownloadResumable(
+        downloadUrl,
+        targetPath,
+        {},
+        (downloadProgressData) => {
+          const total = downloadProgressData.totalBytesExpectedToWrite;
+          const written = downloadProgressData.totalBytesWritten;
+          if (total > 0) {
+            const ratio = written / total;
+            setDownloadProgress(ratio);
+
+            const currentTime = Date.now();
+            const timeDiffSec = (currentTime - lastTime) / 1000;
+            let speedText = '';
+            if (timeDiffSec >= 1) {
+              const bytesDiff = written - lastBytes;
+              const speedMb = (bytesDiff / (1024 * 1024)) / timeDiffSec;
+              speedText = ` · ${speedMb.toFixed(1)} MB/s`;
+              lastTime = currentTime;
+              lastBytes = written;
+            }
+
+            const writtenMb = (written / (1024 * 1024)).toFixed(0);
+            const totalMb = (total / (1024 * 1024)).toFixed(0);
+            setDownloadProgressText(`${writtenMb} MB / ${totalMb} MB (${Math.round(ratio * 100)}%)${speedText}`);
+          }
+        }
+      );
+
+      downloadResumableRef.current = downloadResumable;
+      const result = await downloadResumable.downloadAsync();
+
+      if (result?.uri) {
+        setDownloadProgress(1);
+        setDownloadProgressText('Download complete! Initializing Guru AI engine...');
+        await bindNativeModelPath(result.uri, 'Downloaded Model', 'gemma-4-E2B-it.litertlm');
+        Alert.alert(
+          'Guru Brain Ready',
+          'Gemma 4 model downloaded successfully! Guru is now 100% offline and ready to tutor you.'
+        );
+      }
+    } catch (error: any) {
+      console.error('Model download error:', error);
+      Alert.alert(
+        'Download Interrupted',
+        error?.message || 'Could not complete model download. Check internet connection and try again.'
+      );
+    } finally {
+      setIsDownloadingModel(false);
+      downloadResumableRef.current = null;
+    }
+  };
+
+  const cancelModelDownload = async () => {
+    try {
+      if (downloadResumableRef.current) {
+        await downloadResumableRef.current.cancelAsync();
+      }
+    } catch (e) {}
+    setIsDownloadingModel(false);
+    setDownloadProgress(0);
+    setDownloadProgressText('');
+  };
 
   useEffect(() => {
     void bootApp();
@@ -4696,28 +4785,62 @@ const formatDeterministicMathResponseStable = (text: string) => {
         {renderSubjectChips()}
       </View>
 
-      <View style={styles.statusCard}>
-        <View style={styles.statusHeader}>
-          <BrainCircuit size={18} color={hasBoundModel ? '#1a73e8' : '#b06000'} />
-          <Text style={[styles.statusBadgeText, { color: hasBoundModel ? '#1a73e8' : '#b06000' }]}>{hasBoundModel ? ui.modelReady : ui.modelMissing}</Text>
-        </View>
-        <Text style={styles.statusBody}>{modelStatus}</Text>
-        {isModelSetupBusy && (
-          <View style={styles.modelSetupBusyRow}>
-            <ActivityIndicator size='small' color='#1a73e8' />
-            <Text style={styles.modelSetupBusyText}>Model setup is running. Please wait on low-spec devices.</Text>
+      {!hasBoundModel && (
+        <View style={styles.downloadHeroCard}>
+          <View style={styles.downloadHeroHeader}>
+            <Download size={22} color="#1a73e8" />
+            <Text style={styles.downloadHeroTitle}>Download Offline Study Resources</Text>
           </View>
-        )}
-        <View style={styles.statusActionsRow}>
-          <TouchableOpacity style={styles.refreshButton} onPress={() => void chooseModelFolder()} disabled={isModelSetupBusy}>
-            <Text style={styles.refreshButtonText}>Choose model folder</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.refreshButtonSecondary} onPress={() => void bootApp()} disabled={isModelSetupBusy}>
-            <Text style={styles.refreshButtonSecondaryText}>{ui.refreshModel}</Text>
-          </TouchableOpacity>
+          <Text style={styles.downloadHeroDescription}>
+            Download all the study resources you need for offline study (2.4 GB) once over Wi-Fi. Once downloaded, Guru runs 100% offline forever without internet.
+          </Text>
+
+          {isDownloadingModel ? (
+            <View style={styles.downloadProgressContainer}>
+              <View style={styles.progressBarBackground}>
+                <View style={[styles.progressBarFill, { width: `${Math.max(2, Math.round(downloadProgress * 100))}%` }]} />
+              </View>
+              <Text style={styles.downloadProgressLabel}>{downloadProgressText || 'Downloading offline study resources...'}</Text>
+              <TouchableOpacity style={styles.cancelDownloadButton} onPress={cancelModelDownload}>
+                <Text style={styles.cancelDownloadButtonText}>Cancel Download</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.downloadActionsColumn}>
+              <TouchableOpacity style={styles.primaryDownloadButton} onPress={startModelDownload}>
+                <Download size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.primaryDownloadButtonText}>Download Study Resources (2.4 GB) [Wi-Fi]</Text>
+              </TouchableOpacity>
+              <View style={styles.secondaryActionsRow}>
+                <TouchableOpacity style={styles.secondaryChoiceButton} onPress={() => void chooseModelFolder()}>
+                  <Text style={styles.secondaryChoiceButtonText}>I already have the resources file</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.secondaryChoiceButton} onPress={() => void bootApp()}>
+                  <Text style={styles.secondaryChoiceButtonText}>Scan phone</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </View>
-        <Text style={styles.modelSetupHint}>Choose the folder that contains model.litertlm. This may take time on low-spec phones; please wait.</Text>
-      </View>
+      )}
+
+      {hasBoundModel && (
+        <View style={styles.statusCard}>
+          <View style={styles.statusHeader}>
+            <BrainCircuit size={18} color="#1a73e8" />
+            <Text style={[styles.statusBadgeText, { color: '#1a73e8' }]}>Offline study resources active</Text>
+          </View>
+          <Text style={styles.statusBody}>{modelStatus}</Text>
+          <View style={styles.statusActionsRow}>
+            <TouchableOpacity style={styles.refreshButton} onPress={() => void chooseModelFolder()} disabled={isModelSetupBusy}>
+              <Text style={styles.refreshButtonText}>Change resources file</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.refreshButtonSecondary} onPress={() => void bootApp()} disabled={isModelSetupBusy}>
+              <Text style={styles.refreshButtonSecondaryText}>Rescan resources</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       <View style={styles.dualCardRow}>
         <View style={[styles.miniCard, styles.streakCard]}>
@@ -6029,6 +6152,109 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: -12,
     marginTop: -48,
+  },
+  downloadHeroCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#d2e3fc',
+    shadowColor: '#1a73e8',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  downloadHeroHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  downloadHeroTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1a73e8',
+    marginLeft: 8,
+  },
+  downloadHeroDescription: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#475569',
+    marginBottom: 14,
+  },
+  downloadProgressContainer: {
+    marginTop: 4,
+  },
+  progressBarBackground: {
+    height: 10,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 5,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#1a73e8',
+    borderRadius: 5,
+  },
+  downloadProgressLabel: {
+    fontSize: 12,
+    color: '#1e293b',
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  cancelDownloadButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#fee2e2',
+  },
+  cancelDownloadButtonText: {
+    fontSize: 12,
+    color: '#dc2626',
+    fontWeight: '600',
+  },
+  downloadActionsColumn: {
+    marginTop: 4,
+  },
+  primaryDownloadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a73e8',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  primaryDownloadButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  secondaryActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  secondaryChoiceButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  secondaryChoiceButtonText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });
 

@@ -240,14 +240,13 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
      * Cleans up unwanted markdown artifacts, turn tags, or redundant headings before showing the user.
      */
     private fun sanitizeFinalOutput(text: String, isMathRequest: Boolean): String {
+        // Strip any variation of Gemma special tokens (<start_of_turn>, <end_of_turn>, <eos>, etc.)
         var cleaned = text
-            .replace("<start_of_turn>user", "")
-            .replace("<start_of_turn>model", "")
-            .replace("<end_of_turn>", "")
-            .replace("<start_of_turn>", "")
+            .replace(Regex("(?i)<\\s*/?\\s*(?:start_of_turn|end_of_turn|eos|bos|pad|unk|model|user)[^>]*>"), "")
+            .replace(Regex("<[^>]+>"), "") // Remove any remaining special token brackets
             .trim()
 
-        val stopTokens = listOf("\nUser:", "\nAssistant:", "User: ", "Assistant: ")
+        val stopTokens = listOf("\nUser:", "\nAssistant:", "User: ", "Assistant: ", "\nuser\n", "\nmodel\n")
         for (stop in stopTokens) {
             val idx = cleaned.indexOf(stop)
             if (idx != -1) {
@@ -705,23 +704,21 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                             val mergedText = mergeChunk(responseBuilder.toString(), response)
 
                             // Detect Gemma turn boundaries or synthetic dialogue turns and stop immediately
-                            val stopTokens = listOf("<end_of_turn>", "<start_of_turn>", "\nUser:", "\nAssistant:", "User: ", "Assistant: ")
-                            for (stop in stopTokens) {
-                                val idx = mergedText.indexOf(stop)
-                                if (idx != -1) {
-                                    val cleanText = mergedText.substring(0, idx).trim()
-                                    loopGuardTriggered.set(true)
-                                    responseBuilder.clear()
-                                    responseBuilder.append(cleanText)
-                                    emitGenerationEvent(chunkEvent, requestId, cleanText)
-                                    try {
-                                        localSession?.cancelProcess()
-                                    } catch (e: Exception) {
-                                        Log.w(tag, "Turn stop cancel failed", e)
-                                    }
-                                    finishSuccess(cleanText)
-                                    return
+                            val stopPattern = Regex("(?i)<\\s*/?\\s*(?:start_of_turn|end_of_turn|eos|bos|pad|unk|model|user)[^>]*>|\\n(?:User|Assistant):|^(?:User|Assistant):|\\nuser\\n|\\nmodel\\n")
+                            val match = stopPattern.find(mergedText)
+                            if (match != null) {
+                                val cleanText = mergedText.substring(0, match.range.first).trim()
+                                loopGuardTriggered.set(true)
+                                responseBuilder.clear()
+                                responseBuilder.append(cleanText)
+                                emitGenerationEvent(chunkEvent, requestId, cleanText)
+                                try {
+                                    localSession?.cancelProcess()
+                                } catch (e: Exception) {
+                                    Log.w(tag, "Turn stop cancel failed", e)
                                 }
+                                finishSuccess(cleanText)
+                                return
                             }
 
                             if (hasRunawayRepetition(mergedText)) {
