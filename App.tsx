@@ -6033,4 +6033,4 @@ const styles = StyleSheet.create({
 });
 
 
-const MODEL_LABEL = 'Google AI Edge LiteRT Gemma 4 finetuned';
+const MODEL_LABEL = 'Google AI Edge LiteRT Gemma 4';

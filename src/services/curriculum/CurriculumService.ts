@@ -112,7 +112,9 @@ export const findMatchingCurriculumChunk = (
 
 /**
  * Builds a prompt with injected curriculum context and grade-specific rules.
- * Keeps injected tokens strictly bounded to prevent exceeding mobile memory budgets.
+/**
+ * Injects concise syllabus reference data (formulas/rules) without rigid meta constraints.
+ * Allows base instruction-tuned Gemma 4 to answer naturally.
  */
 export const buildConditionedPrompt = (
   options: PromptContextOptions
@@ -124,36 +126,16 @@ export const buildConditionedPrompt = (
 
   const contextLines: string[] = [];
 
-  // 1. Grade-level pedagogical rule
-  if (targetGrade === '10') {
-    contextLines.push(
-      '[Nepal CDC Grade 10 SEE Mode: Focus on exact marking scheme, formal proof or step-by-step calculation with units, and clear exam format.]'
-    );
-  } else {
-    contextLines.push(
-      '[Nepal CDC Grade 9 Mode: Provide clear, foundational, step-by-step guidance with simple vocabulary.]'
-    );
+  // Syllabus formula and definition injection
+  if (matchedChunk?.formulasOrRules) {
+    contextLines.push(`Reference Formulas: ${matchedChunk.formulasOrRules}`);
   }
 
-  // 2. Syllabus chunk injection (if matched)
-  if (matchedChunk) {
-    contextLines.push(`[Topic: ${matchedChunk.topic}]`);
-    if (matchedChunk.formulasOrRules) {
-      contextLines.push(`[Syllabus Reference: ${matchedChunk.formulasOrRules}]`);
-    }
-    if (targetGrade === '10' && matchedChunk.seePattern) {
-      contextLines.push(`[SEE Exam Pattern: ${matchedChunk.seePattern}]`);
-    }
-  }
-
-  // 3. Document attachment note
+  // Document attachment reference
   if (hasAttachment) {
-    contextLines.push(
-      '[Note: Refer to attached reference material when formulating the response.]'
-    );
+    contextLines.push('Reference: Use the attached study material to answer the question.');
   }
 
-  // Combine into a bounded prompt
   const header = contextLines.join('\n');
   const conditionedPrompt = header ? `${header}\n\n${question.trim()}` : question.trim();
 

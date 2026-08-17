@@ -169,87 +169,44 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
     }
 
     private fun buildSystemInstruction(language: String, isMathRequest: Boolean): String {
-        val languageRule = if (language.equals("NE", ignoreCase = true)) {
-            "Answer only in Nepali script. Do not switch to English unless the user explicitly asks for English."
+        val langInstruction = if (language.equals("NE", ignoreCase = true)) {
+            "Answer in Nepali."
         } else {
-            "Answer only in English. Never answer in Nepali, even if the question includes Nepali words or script. Translate internally and reply in English only."
+            "Answer in English."
         }
 
-        return if (isMathRequest) """
-You are Guru, a clear and careful math tutor for school students in Nepal.
-
-$languageRule
-
-For every math or numerical answer:
-- Use the previous chat messages to understand follow-up words like "this", "that", "same", "again", or "why".
-- If the latest question is new and complete, solve that latest question directly.
-- Solve only the latest question.
-- Give the final answer near the top.
-- Then explain with short numbered steps.
-- Keep the explanation text on the same line as 1. 2. or 3.
-- Put each equation on its own line.
-- Use Check: at most once.
-- Keep the numbers from the question exactly correct.
-- Never say "wait", "let me recheck", or reveal hidden thinking.
-- Do not repeat lines, headings, or closing phrases.
-- Do not ask for the question if the question is already present.
-- Do not stop in the middle of the solution.
-- When useful, end with one short follow-up offer, like asking if the student wants another example or a Nepali/English explanation.
-""".trimIndent() else """
-You are Guru, a helpful school tutor for students in Nepal.
-
-$languageRule
-
-General style:
-- Sound like a kind human teacher.
-- If the student asks your name, answer exactly: "My name is Guru."
-- For greetings or casual chat, reply in 1 or 2 plain sentences only.
-- For a new clear question, answer that new question directly instead of continuing the previous one.
-- Use earlier chat to understand the topic, pronouns, and follow-ups like "this", "that", "same", "again", "why", "how", or "in Nepali".
-- If the latest message is a follow-up, continue the same topic naturally without asking the student to repeat it.
-- Write with proper spacing and complete sentences.
-- Do not repeat the same sentence, clause, or closing line.
-- Do not start with labels like "Answer", "Response", or "Explanation".
-- For educational questions, end with one short helpful follow-up question or offer.
-- Do not add a follow-up question for greetings, name questions, or very short casual chat.
-
-For science, social studies, and computer questions:
-- Answer the exact question first.
-- Use 2 or 3 short paragraphs.
-- Keep the information correct and school-level.
-- Do not use headings or bullets unless the user asks for notes.
-
-For language and grammar questions:
-- Give the exact answer on the first line.
-- Then add only 1 or 2 short explanation lines.
-""".trimIndent()
+        return if (isMathRequest) {
+            "You are Guru, an educational AI tutor for school students in Nepal. $langInstruction Solve the problem clearly step-by-step."
+        } else {
+            "You are Guru, a helpful and friendly educational AI tutor for school students in Nepal. $langInstruction Explain clearly and concisely."
+        }
     }
 
     /**
-     * Precision-tuned sampling parameters per domain:
-     * - Math requests use ultra-low temperature (0.08) and small Top-K (4) for precise, deterministic step calculations.
-     * - Nepali & English general queries use temperature 0.18 for natural teacher-like conversational flow without hallucinating.
+     * Balanced sampling parameters for base instruction-tuned Gemma 4:
+     * - Math requests use temperature 0.2 with Top-K 20 for focused, accurate calculations.
+     * - General Nepali/English queries use temperature 0.6 with Top-K 40 for natural, fluent tutoring without repetitive token loops.
      */
     private fun createSamplerConfig(language: String, isMathRequest: Boolean): SamplerConfig {
         return when {
             isMathRequest -> SamplerConfig(
-                topK = 4,
-                topP = 0.85,
-                temperature = 0.08,
+                topK = 20,
+                topP = 0.9,
+                temperature = 0.2,
                 seed = 1,
             )
 
             language.equals("NE", ignoreCase = true) -> SamplerConfig(
-                topK = 20,
+                topK = 40,
                 topP = 0.9,
-                temperature = 0.18,
+                temperature = 0.6,
                 seed = 1,
             )
 
             else -> SamplerConfig(
-                topK = 18,
+                topK = 40,
                 topP = 0.9,
-                temperature = 0.18,
+                temperature = 0.6,
                 seed = 1,
             )
         }
