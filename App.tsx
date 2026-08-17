@@ -25,6 +25,7 @@ import {
   BrainCircuit,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Download,
   FileText,
   Folder,
@@ -39,6 +40,7 @@ import {
   Plus,
   Send,
   ShieldCheck,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react-native';
@@ -4978,8 +4980,63 @@ const formatDeterministicMathResponseStable = (text: string) => {
             </View>
           )}
 
-          {/* Main Action Buttons with Pause / Resume */}
-          {isDownloadingModel ? (
+          {/* If ready, show Choose Your Grade directly */}
+          {isAllReady ? (
+            <View style={styles.readyGradeSectionWrapper}>
+              <View style={styles.chooseGradeHeaderRow}>
+                <Text style={styles.sparkleDecoration}>✨</Text>
+                <Text style={styles.chooseGradeSectionHeader}>Choose Your Grade</Text>
+                <Text style={styles.sparkleDecoration}>✨</Text>
+              </View>
+              <View style={styles.gradeChoiceDualRow}>
+                <TouchableOpacity
+                  style={[styles.gradeChoiceBox, styles.gradeChoiceBoxBlue]}
+                  onPress={async () => {
+                    setGrade('9');
+                    const updatedUser = user ? { ...user, grade: '9' } : { name: 'Student', grade: '9' };
+                    setUser(updatedUser);
+                    await AsyncStorage.setItem(STORAGE_KEYS.user, JSON.stringify(updatedUser));
+                    setScreen('main');
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.gradeChoiceLeft}>
+                    <View style={styles.gradeIconCircleBlue}>
+                      <BookOpen size={20} color="#ffffff" />
+                    </View>
+                    <View style={styles.gradeChoiceTextContainer}>
+                      <Text style={styles.gradeChoiceTitle}>Grade 9</Text>
+                      <Text style={styles.gradeChoiceSubtitle}>Explore Grade 9 Resources</Text>
+                    </View>
+                  </View>
+                  <ChevronRight size={20} color="#1a73e8" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.gradeChoiceBox, styles.gradeChoiceBoxGreen]}
+                  onPress={async () => {
+                    setGrade('10');
+                    const updatedUser = user ? { ...user, grade: '10' } : { name: 'Student', grade: '10' };
+                    setUser(updatedUser);
+                    await AsyncStorage.setItem(STORAGE_KEYS.user, JSON.stringify(updatedUser));
+                    setScreen('main');
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.gradeChoiceLeft}>
+                    <View style={styles.gradeIconCircleGreen}>
+                      <BookOpen size={20} color="#ffffff" />
+                    </View>
+                    <View style={styles.gradeChoiceTextContainer}>
+                      <Text style={styles.gradeChoiceTitle}>Grade 10</Text>
+                      <Text style={styles.gradeChoiceSubtitle}>Explore Grade 10 Resources</Text>
+                    </View>
+                  </View>
+                  <ChevronRight size={20} color="#16a34a" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : isDownloadingModel ? (
             <View style={styles.downloadRunningActionsRow}>
               <View style={[styles.bigDownloadButton, styles.bigDownloadButtonActive, { flex: 1, marginRight: 8, marginTop: 10, marginBottom: 10 }]}>
                 <View style={styles.buttonBusyRow}>
@@ -5003,21 +5060,13 @@ const formatDeterministicMathResponseStable = (text: string) => {
             <TouchableOpacity
               style={styles.bigDownloadButton}
               onPress={async () => {
-                if (isAllReady) {
-                  setScreen(user ? 'main' : 'onboarding');
-                  return;
-                }
                 await downloadAllResourcesFlow();
               }}
             >
-              {isAllReady ? (
-                <Text style={styles.bigDownloadButtonText}>Continue to Guru</Text>
-              ) : (
-                <View style={styles.buttonBusyRow}>
-                  <Download size={20} color="#ffffff" style={{ marginRight: 8 }} />
-                  <Text style={styles.bigDownloadButtonText}>Download</Text>
-                </View>
-              )}
+              <View style={styles.buttonBusyRow}>
+                <Download size={20} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.bigDownloadButtonText}>Download</Text>
+              </View>
             </TouchableOpacity>
           )}
 
@@ -5059,20 +5108,45 @@ const formatDeterministicMathResponseStable = (text: string) => {
             <Text style={styles.label}>{ui.nameLabel}</Text>
             <TextInput style={styles.input} value={name} onChangeText={setName} autoCorrect={false} />
 
-            <Text style={styles.label}>{ui.classLabel}</Text>
-            <View style={styles.gradeGrid}>
-              {gradeOptions.map((option) => {
-                const selected = option === grade;
-                return (
-                  <TouchableOpacity
-                    key={option}
-                    style={[styles.gradePill, selected && styles.gradePillActive]}
-                    onPress={() => setGrade(option)}
-                  >
-                    <Text style={[styles.gradeText, selected && styles.gradeTextActive]}>{`Class ${option}`}</Text>
-                  </TouchableOpacity>
-                );
-              })}
+            <View style={styles.chooseGradeHeaderRow}>
+              <Text style={styles.sparkleDecoration}>✨</Text>
+              <Text style={styles.chooseGradeSectionHeader}>Choose Your Grade</Text>
+              <Text style={styles.sparkleDecoration}>✨</Text>
+            </View>
+            <View style={styles.gradeChoiceDualRow}>
+              <TouchableOpacity
+                style={[styles.gradeChoiceBox, styles.gradeChoiceBoxBlue, grade === '9' && styles.gradeChoiceBoxBlueActive]}
+                onPress={() => setGrade('9')}
+                activeOpacity={0.8}
+              >
+                <View style={styles.gradeChoiceLeft}>
+                  <View style={styles.gradeIconCircleBlue}>
+                    <BookOpen size={20} color="#ffffff" />
+                  </View>
+                  <View style={styles.gradeChoiceTextContainer}>
+                    <Text style={styles.gradeChoiceTitle}>Grade 9</Text>
+                    <Text style={styles.gradeChoiceSubtitle}>Explore Grade 9 Resources</Text>
+                  </View>
+                </View>
+                <ChevronRight size={20} color="#1a73e8" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.gradeChoiceBox, styles.gradeChoiceBoxGreen, grade === '10' && styles.gradeChoiceBoxGreenActive]}
+                onPress={() => setGrade('10')}
+                activeOpacity={0.8}
+              >
+                <View style={styles.gradeChoiceLeft}>
+                  <View style={styles.gradeIconCircleGreen}>
+                    <BookOpen size={20} color="#ffffff" />
+                  </View>
+                  <View style={styles.gradeChoiceTextContainer}>
+                    <Text style={styles.gradeChoiceTitle}>Grade 10</Text>
+                    <Text style={styles.gradeChoiceSubtitle}>Explore Grade 10 Resources</Text>
+                  </View>
+                </View>
+                <ChevronRight size={20} color="#16a34a" />
+              </TouchableOpacity>
             </View>
 
             <TouchableOpacity
@@ -6796,6 +6870,101 @@ const styles = StyleSheet.create({
     color: '#64748b',
     lineHeight: 17,
     flex: 1,
+  },
+  readyGradeSectionWrapper: {
+    width: '100%',
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  chooseGradeHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  sparkleDecoration: {
+    fontSize: 16,
+    marginHorizontal: 6,
+  },
+  chooseGradeSectionHeader: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: -0.3,
+  },
+  gradeChoiceDualRow: {
+    width: '100%',
+    flexDirection: 'column',
+    gap: 10,
+    marginBottom: 8,
+  },
+  gradeChoiceBox: {
+    width: '100%',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  gradeChoiceBoxBlue: {
+    borderColor: '#bfdbfe',
+    backgroundColor: '#f8fafc',
+  },
+  gradeChoiceBoxBlueActive: {
+    borderColor: '#1a73e8',
+    backgroundColor: '#eff6ff',
+  },
+  gradeChoiceBoxGreen: {
+    borderColor: '#bbf7d0',
+    backgroundColor: '#f8fafc',
+  },
+  gradeChoiceBoxGreenActive: {
+    borderColor: '#16a34a',
+    backgroundColor: '#f0fdf4',
+  },
+  gradeChoiceLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  gradeIconCircleBlue: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#1a73e8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  gradeIconCircleGreen: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#16a34a',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  gradeChoiceTextContainer: {
+    flex: 1,
+  },
+  gradeChoiceTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  gradeChoiceSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
   },
 });
 
