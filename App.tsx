@@ -4984,9 +4984,9 @@ const formatDeterministicMathResponseStable = (text: string) => {
           {isAllReady ? (
             <View style={styles.readyGradeSectionWrapper}>
               <View style={styles.chooseGradeHeaderRow}>
-                <Text style={styles.sparkleDecoration}>✨</Text>
+                <Sparkles size={16} color="#1a73e8" style={{ marginHorizontal: 6 }} />
                 <Text style={styles.chooseGradeSectionHeader}>Choose Your Grade</Text>
-                <Text style={styles.sparkleDecoration}>✨</Text>
+                <Sparkles size={16} color="#1a73e8" style={{ marginHorizontal: 6 }} />
               </View>
               <View style={styles.gradeChoiceDualRow}>
                 <TouchableOpacity
@@ -5109,9 +5109,9 @@ const formatDeterministicMathResponseStable = (text: string) => {
             <TextInput style={styles.input} value={name} onChangeText={setName} autoCorrect={false} />
 
             <View style={styles.chooseGradeHeaderRow}>
-              <Text style={styles.sparkleDecoration}>✨</Text>
+              <Sparkles size={16} color="#1a73e8" style={{ marginHorizontal: 6 }} />
               <Text style={styles.chooseGradeSectionHeader}>Choose Your Grade</Text>
-              <Text style={styles.sparkleDecoration}>✨</Text>
+              <Sparkles size={16} color="#1a73e8" style={{ marginHorizontal: 6 }} />
             </View>
             <View style={styles.gradeChoiceDualRow}>
               <TouchableOpacity
@@ -6881,10 +6881,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
-  },
-  sparkleDecoration: {
-    fontSize: 16,
-    marginHorizontal: 6,
   },
   chooseGradeSectionHeader: {
     fontSize: 16,

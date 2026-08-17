@@ -477,7 +477,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                     loadedModelPath = resolvedPath
                     activeBackendType = "GPU"
                     backendName = "GPU"
-                    Log.d(tag, "✅ GPU backend initialized successfully — inference will be 2-3x faster")
+                    Log.d(tag, "[OK] GPU backend initialized successfully — inference will be 2-3x faster")
                 } catch (gpuError: Exception) {
                     // GPU failed — this is expected on many budget phones. Fall back gracefully.
                     Log.w(tag, "GPU backend unavailable (${gpuError.message}), falling back to CPU")
@@ -501,7 +501,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                     loadedModelPath = resolvedPath
                     activeBackendType = "CPU"
                     backendName = "CPU"
-                    Log.d(tag, "✅ CPU backend initialized successfully — stable fallback active")
+                    Log.d(tag, "[OK] CPU backend initialized successfully — stable fallback active")
                 }
 
                 // --- Stage 6: Warm-up inference ---
@@ -773,7 +773,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 lastInferenceTimeMs = elapsedMs
                 lastTokenCount = tokenCounter.get()
                 val tokPerSec = if (elapsedMs > 0) (lastTokenCount.toDouble() / elapsedMs * 1000.0) else 0.0
-                Log.d(tag, "📊 Inference complete: ${lastTokenCount} tokens in ${elapsedMs}ms (${"%.1f".format(tokPerSec)} tok/s) on $activeBackendType")
+                Log.d(tag, "[Metrics] Inference complete: ${lastTokenCount} tokens in ${elapsedMs}ms (${"%.1f".format(tokPerSec)} tok/s) on $activeBackendType")
 
                 val finalText = synchronized(responseBuilder) { responseBuilder.toString().trim() }
                 promise.resolve(sanitizeFinalOutput(finalText, isMathRequest))
