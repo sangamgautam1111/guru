@@ -156,11 +156,11 @@ const sanitizeSessions = (value: unknown): ChatSession[] => {
 
 const copy = {
   EN: {
-    appName: 'PathSala',
+    appName: 'Guru',
     greeting: 'Hi',
     subtitle: 'Your offline AI tutor',
     startPrompt: 'What do you want to learn today?',
-    askPlaceholder: 'Ask PathSala...',
+    askPlaceholder: 'Ask Guru...',
     nameLabel: 'Enter your name',
     classLabel: 'Choose your class',
     continueLabel: 'Continue',
@@ -173,7 +173,7 @@ const copy = {
     stopLabel: 'Stop',
     thinkingLabel: 'Answering...',
     responseStopped: 'Response stopped.',
-    responseEmpty: 'PathSala is starting the local model. Please wait a moment.',
+    responseEmpty: 'Guru is starting the local model. Please wait a moment.',
     dashboardTitle: 'Learning Dashboard',
     dashboardText: 'Everything stays on your phone, and the LiteRT-LM model runs locally when available.',
     modelReady: 'LiteRT-LM local engine active',
@@ -188,7 +188,7 @@ const copy = {
     streakTitle: 'Daily streak',
     streakText: 'learning days in a row',
     focusTitle: 'Class-aware tutoring',
-    focusText: 'PathSala changes tone and depth for each class level, from gentle basics to serious exam prep.',
+    focusText: 'Guru changes tone and depth for each class level, from gentle basics to serious exam prep.',
     keyTakeaway: 'Key takeaway',
     termsTitle: 'Important terms',
     plannerTitle: 'Study planner',
@@ -203,11 +203,11 @@ const copy = {
     noChats: 'No recent chats',
   },
   NE: {
-    appName: 'PathSala',
+    appName: 'Guru',
     greeting: 'Namaste',
     subtitle: 'Tapai ko offline AI tutor',
     startPrompt: 'Aaja kun subject padhne?',
-    askPlaceholder: 'PathSala lai sodhnuhos...',
+    askPlaceholder: 'Guru lai sodhnuhos...',
     nameLabel: 'Afno naam lekhnu hos',
     classLabel: 'Class channuhos',
     continueLabel: 'Agadi badhnuhos',
@@ -220,7 +220,7 @@ const copy = {
     stopLabel: 'Roknuhos',
     thinkingLabel: 'Jawaf taiyar gardai...',
     responseStopped: 'Jawaf rokiyo.',
-    responseEmpty: 'PathSala local model start gardai cha. Kehi seconds wait garnuhos.',
+    responseEmpty: 'Guru local model start gardai cha. Kehi seconds wait garnuhos.',
     dashboardTitle: 'Learning Dashboard',
     dashboardText: 'Tutor history phone mai bascha ra model bhetiye pachi local LiteRT-LM bata chalcha.',
     modelReady: 'LiteRT-LM local engine active',
@@ -577,7 +577,7 @@ const formatModelText = (text: string) => {
 
   // Finish with simple whitespace cleanup.
   cleaned = cleaned.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-  cleaned = cleaned.replace(new RegExp(pathSalaToken, 'g'), 'PathSala');
+  cleaned = cleaned.replace(new RegExp(pathSalaToken, 'g'), 'Guru');
   cleaned = cleaned
     .replace(/^(?:#\s*)?(?:answer|reply|response)\s*:?\s*/i, '')
     .replace(/^(?:#\s*)?(?:explanation)\s*:?\s*/i, '');
@@ -625,7 +625,7 @@ const formatModelText = (text: string) => {
     cleaned = filteredSentences.join('\n\n');
   }
 
-  return cleaned.replace(new RegExp(pathSalaToken, 'g'), 'PathSala');
+  return cleaned.replace(new RegExp(pathSalaToken, 'g'), 'Guru');
 };
 
 const gradeNumber = (grade?: string) => {
@@ -2146,7 +2146,7 @@ const normalizeTutorTextBase = (text: string) => {
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 
-  return cleaned.replace(new RegExp(pathSalaToken, 'g'), 'PathSala');
+  return cleaned.replace(new RegExp(pathSalaToken, 'g'), 'Guru');
 };
 
 const collapseAdjacentDuplicateLines = (text: string) => {
@@ -3745,14 +3745,14 @@ export default function App() {
     const normalizedInput = normalizeSingleLine(input).toLowerCase();
     if (/^(hi|hello|hey|namaste|namaskar)\b/.test(normalizedInput)) {
       return language === 'NE'
-        ? 'Namaste! Ma PathSala ho. Tapai ko study question sodhnuhos, ma sajilo tarikale help garchu.'
-        : "Hi! I'm PathSala. Ask me any study question, and I'll help clearly.";
+        ? 'Namaste! Ma Guru ho. Tapai ko study question sodhnuhos, ma sajilo tarikale help garchu.'
+        : "Hi! I'm Guru. Ask me any study question, and I'll help clearly.";
     }
 
     if (/your name|what.*name|who are you/.test(normalizedInput)) {
       return language === 'NE'
-        ? 'Mero naam PathSala ho. Ma tapai ko study helper ho.'
-        : 'My name is PathSala. I am your study helper.';
+        ? 'Mero naam Guru ho. Ma tapai ko study helper ho.'
+        : 'My name is Guru. I am your study helper.';
     }
 
     return language === 'NE'

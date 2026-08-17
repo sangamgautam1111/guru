@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "PathSala",
+    "name": "Guru",
     "slug": "pathsala",
     "scheme": "pathsala",
     "icon": "./assets/logo.png",
@@ -15,8 +15,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "PathSala needs photo access so you can attach and solve questions from your gallery.",
-          "cameraPermission": "PathSala needs camera access so you can capture and solve questions from a photo.",
+          "photosPermission": "Guru needs photo access so you can attach and solve questions from your gallery.",
+          "cameraPermission": "Guru needs camera access so you can capture and solve questions from a photo.",
           "microphonePermission": false
         }
       ]
