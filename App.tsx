@@ -2413,25 +2413,128 @@ const normalizeQuizQuestionKey = (value: string) =>
 const getQuizContextKey = (language: Language, grade: string, subject: SubjectFocus) =>
   `${language}:${grade}:${subject.id}`;
 
+const convertLatexToReadableMath = (text: string): string => {
+  if (!text) return '';
+
+  let converted = text;
+
+  // 1. Remove LaTeX block and inline math delimiters ($$...$$, \[...\], \(...\), $...$)
+  converted = converted
+    .replace(/\$\$(.*?)\$\$/gs, '$1')
+    .replace(/\\\[(.*?)\\\]/gs, '$1')
+    .replace(/\\\((.*?)\\\)/gs, '$1')
+    .replace(/\$([^\$\n]+)\$/g, '$1');
+
+  // 2. Convert common LaTeX fractions \frac{a}{b}
+  converted = converted
+    .replace(/\\frac\{1\}\{2\}/g, '½')
+    .replace(/\\frac\{1\}\{4\}/g, '¼')
+    .replace(/\\frac\{3\}\{4\}/g, '¾')
+    .replace(/\\frac\{1\}\{3\}/g, '⅓')
+    .replace(/\\frac\{2\}\{3\}/g, '⅔')
+    .replace(/\\frac\{1\}\{5\}/g, '⅕')
+    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1 / $2)');
+
+  // 3. Convert square roots and cube roots
+  converted = converted
+    .replace(/\\sqrt\[3\]\{([^{}]+)\}/g, '∛($1)')
+    .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
+    .replace(/\\sqrt\s*([0-9a-zA-Z]+)/g, '√$1');
+
+  // 4. Superscripts and powers (e.g. x^2 -> x², x^{3} -> x³)
+  const superscriptMap: Record<string, string> = {
+    '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+    '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+    '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾',
+    'n': 'ⁿ', 'i': 'ⁱ', 'x': 'ˣ', 'y': 'ʸ',
+  };
+  converted = converted.replace(/\^\{([0-9+\-nixy]+)\}/g, (_, p1) => {
+    return p1.split('').map((c: string) => superscriptMap[c] || c).join('');
+  });
+  converted = converted.replace(/\^([0-9n])/g, (_, p1) => superscriptMap[p1] || `^${p1}`);
+
+  // 5. Subscripts (e.g. x_{1} -> x₁)
+  const subscriptMap: Record<string, string> = {
+    '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+    '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+    '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+    'a': 'ₐ', 'e': 'ₑ', 'o': 'ₒ', 'x': 'ₓ', 'n': 'ₙ',
+  };
+  converted = converted.replace(/_\{([0-9+\-aeoxn]+)\}/g, (_, p1) => {
+    return p1.split('').map((c: string) => subscriptMap[c] || c).join('');
+  });
+  converted = converted.replace(/_([0-9n])/g, (_, p1) => subscriptMap[p1] || `_${p1}`);
+
+  // 6. LaTeX operators & symbols
+  converted = converted
+    .replace(/\\times\b/g, '×')
+    .replace(/\\cdot\b/g, '·')
+    .replace(/\\div\b/g, '÷')
+    .replace(/\\pm\b/g, '±')
+    .replace(/\\mp\b/g, '∓')
+    .replace(/\\leq?\b/g, '≤')
+    .replace(/\\geq?\b/g, '≥')
+    .replace(/\\neq?\b/g, '≠')
+    .replace(/\\approx\b/g, '≈')
+    .replace(/\\equiv\b/g, '≡')
+    .replace(/\\propto\b/g, '∝')
+    .replace(/\\infty\b/g, '∞')
+    .replace(/\\sum\b/g, '∑')
+    .replace(/\\int\b/g, '∫')
+    .replace(/\\degree\b|\^\\circ\b/g, '°')
+    .replace(/\\theta\b/g, 'θ')
+    .replace(/\\pi\b/g, 'π')
+    .replace(/\\alpha\b/g, 'α')
+    .replace(/\\beta\b/g, 'β')
+    .replace(/\\gamma\b/g, 'γ')
+    .replace(/\\Delta\b/g, 'Δ')
+    .replace(/\\delta\b/g, 'δ')
+    .replace(/\\lambda\b/g, 'λ')
+    .replace(/\\mu\b/g, 'μ')
+    .replace(/\\sigma\b/g, 'σ')
+    .replace(/\\omega\b/g, 'ω')
+    .replace(/\\Rightarrow\b|\\implies\b/g, '⇒')
+    .replace(/\\rightarrow\b|\\to\b/g, '→')
+    .replace(/\\Leftarrow\b/g, '⇐')
+    .replace(/\\leftrightarrow\b/g, '↔');
+
+  // 7. Standard functions & text wrappers
+  converted = converted
+    .replace(/\\(?:text|mathrm|mathbf|mathit|textsf)\{([^{}]+)\}/g, '$1')
+    .replace(/\\(?:sin|cos|tan|cot|sec|cosec|log|ln|lim|max|min)\b/g, (m) => m.slice(1));
+
+  return converted;
+};
+
 const normalizeTutorTextBase = (text: string) => {
+  if (!text) return '';
   const pathSalaToken = '__PATHSALA_BRAND__';
+
   let cleaned = stripReasoningPrefix(text)
     .replace(/<[^>]+>/g, '') // Strip all Gemma <start_of_turn>, <end_of_turn>, etc.
     .replace(/\r/g, '\n')
     .replace(/\u2581/g, ' ')
     .replace(/\bpaath\s*\.?\s*sala\b/gi, pathSalaToken)
-    .replace(/\bpath\s*\.?\s*sala\b/gi, pathSalaToken)
+    .replace(/\bpath\s*\.?\s*sala\b/gi, pathSalaToken);
+
+  // Convert raw LaTeX & mathematical notations into human-level visual math
+  cleaned = convertLatexToReadableMath(cleaned);
+
+  // Markdown polish
+  cleaned = cleaned
     .replace(/```[\s\S]*?```/g, (match) => match.replace(/```\w*\n?/g, '').replace(/```/g, ''))
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\*\*\*([^*]+)\*\*\*/g, '$1')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-    .replace(/\\item/g, '- ')
+    .replace(/\\item/g, '• ')
+    .replace(/^[ \t]*#{1,6}\s*(.*)$/gm, '$1')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
+  // Spacing and punctuation polish
   cleaned = cleaned
     .replace(/([.!?।])(?=[A-Za-z\u0900-\u097F])/g, '$1 ')
     .replace(/([a-z\u0900-\u097F])([A-Z])/g, '$1 $2')
