@@ -2,11 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   DeviceEventEmitter,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   NativeModules,
+  PanResponder,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -21,23 +25,30 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
+  Book,
   BookOpen,
+  Bot,
   BrainCircuit,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Download,
+  Eye,
   FileText,
   Folder,
+  FolderOpen,
   Globe,
   Home,
+  Layers,
   LogOut,
+  Maximize2,
   Menu,
   MessageSquare,
   Pause,
   PieChart,
   Play,
   Plus,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
@@ -263,6 +274,265 @@ const copy = {
 } as const;
 
 const gradeOptions = ['9', '10'];
+
+const BOOKS_CATALOG = [
+  // Grade 10 English Medium
+  {
+    id: 'g10-sci-en',
+    grade: '10',
+    subject: 'Science',
+    title: 'Science & Technology (Grade 10)',
+    titleNe: 'विज्ञान तथा प्रविधि (कक्षा १०)',
+    medium: 'EN' as const,
+    pdfName: 'Class-10-Science-English.pdf',
+    totalPages: 240,
+    size: '18.4 MB',
+    chapters: [
+      'Unit 1: Scientific Learning & Research',
+      'Unit 2: Force, Gravitation & Free Fall',
+      'Unit 3: Pressure, Pascal Law & Archimedes',
+      'Unit 4: Energy, Work & Power in Nepal',
+      'Unit 5: Heat, Specific Heat Capacity & Temperature',
+      'Unit 6: Light, Refraction & Lens Defects',
+      'Unit 7: Electricity, Magnetism & Induction',
+      'Unit 8: Chemical Reactions & Periodic Table',
+      'Unit 9: Metals, Extraction & Non-metals',
+      'Unit 10: Everyday Materials: Polymers & Glass',
+      'Unit 11: Heredity & Mendel Laws of Genetics',
+      'Unit 12: Nervous System & Endocrine Glands',
+      'Unit 13: Blood Circulation & Heart Anatomy',
+      'Unit 14: Reproduction in Plants & Animals',
+      'Unit 15: Environmental Ecology & Climate Change',
+    ],
+  },
+  {
+    id: 'g10-math-en',
+    grade: '10',
+    subject: 'Maths',
+    title: 'Compulsory Mathematics (Grade 10)',
+    titleNe: 'अनिवार्य गणित (कक्षा १०)',
+    medium: 'EN' as const,
+    pdfName: 'Class-10-Maths-English.pdf',
+    totalPages: 212,
+    size: '14.2 MB',
+    chapters: [
+      'Ch 1: Sets, Cardinality & Venn Diagrams',
+      'Ch 2: Tax, Money Exchange & Compound Interest',
+      'Ch 3: Population Growth & Compound Depreciation',
+      'Ch 4: Mensuration: Cylinder, Sphere & Cone',
+      'Ch 5: Prism, Pyramid & Combined Solid Shapes',
+      'Ch 6: HCF & LCM of Algebraic Expressions',
+      'Ch 7: Quadratic Equations & Word Problems',
+      'Ch 8: Simultaneous Linear Equations in Two Variables',
+      'Ch 9: Indices & Surds Simplification',
+      'Ch 10: Theoretical Proofs of Triangles & Parallelograms',
+      'Ch 11: Circle Theorems: Angles & Cyclic Quadrilaterals',
+      'Ch 12: Trigonometry: Heights & Distances Problems',
+      'Ch 13: Statistics: Quartiles, Mean & Standard Deviation',
+      'Ch 14: Probability & Tree Diagrams',
+    ],
+  },
+  {
+    id: 'g10-eng-en',
+    grade: '10',
+    subject: 'English',
+    title: 'Compulsory English (Grade 10)',
+    titleNe: 'अनिवार्य अंग्रेजी (कक्षा १०)',
+    medium: 'EN' as const,
+    pdfName: 'Class-10-English-CDC.pdf',
+    totalPages: 198,
+    size: '12.6 MB',
+    chapters: [
+      'Unit 1: A Child Prodigy & Childhood Memories',
+      'Unit 2: Environment Conservation & Ecosystem',
+      'Unit 3: Science & Technology in Modern Life',
+      'Unit 4: Travel, Tourism & Holiday Destinations',
+      'Unit 5: Health, Hygiene & Nutrition Guides',
+      'Unit 6: Custom & Cultural Heritage of Nepal',
+      'Unit 7: Global Ecology & Bio-conservation',
+      'Unit 8: Human Rights, Justice & Moral Values',
+      'Unit 9: Business, Commerce & Global Trade',
+      'Unit 10: Grammar Mastery & Guided Essay Writing',
+    ],
+  },
+  {
+    id: 'g10-optmath-en',
+    grade: '10',
+    subject: 'Optional Math',
+    title: 'Optional Mathematics (Grade 10)',
+    titleNe: 'ऐच्छिक गणित (कक्षा १०)',
+    medium: 'EN' as const,
+    pdfName: 'Class-10-Opt-Maths.pdf',
+    totalPages: 256,
+    size: '16.8 MB',
+    chapters: [
+      'Unit 1: Functions, Domain & Invertibility',
+      'Unit 2: Polynomials & Synthetic Division',
+      'Unit 3: Matrices, Determinants & Inverse Matrix',
+      'Unit 4: Coordinate Geometry: Angle Between Two Lines',
+      'Unit 5: Trigonometric Ratios of Compound Angles',
+      'Unit 6: Multiple & Sub-multiple Angles Formulas',
+      'Unit 7: Transformation: Reflection, Rotation & Inversion',
+      'Unit 8: Vectors: Dot Product & Vector Geometry',
+      'Unit 9: Statistics: Standard Deviation & Variance Calculation',
+    ],
+  },
+  // Grade 10 Nepali Medium
+  {
+    id: 'g10-sci-ne',
+    grade: '10',
+    subject: 'Science',
+    title: 'विज्ञान तथा प्रविधि (कक्षा १० - नेपाली माध्यम)',
+    titleNe: 'विज्ञान तथा प्रविधि',
+    medium: 'NE' as const,
+    pdfName: 'Class-10-Science-Nepali.pdf',
+    totalPages: 236,
+    size: '17.9 MB',
+    chapters: [
+      'एकाइ १: वैज्ञानिक अध्ययन र अनुसन्धान',
+      'एकाइ २: बल, गुरुत्वाकर्षण र स्वतन्त्र खसाइ',
+      'एकाइ ३: चाप, पास्कलको नियम र आर्किमिडिजको सिद्धान्त',
+      'एकाइ ४: ऊर्जा, कार्य र सामर्थ्य',
+      'एकाइ ५: ताप र विशिष्ट तापधारण क्षमता',
+      'एकाइ ६: प्रकाश, अपवर्तन र दृष्टिदोष',
+      'एकाइ ७: करेन्ट विद्युत् र विद्युतीय चुम्बकत्व',
+      'एकाइ ८: रासायनिक प्रतिक्रिया र आवर्त तालिका',
+      'एकाइ ९: धातु, निष्कासन र अधातु',
+      'एकाइ १०: दैनिक जीवनमा प्रयोग हुने रसायनहरू',
+      'एकाइ ११: वंशाणुक्रम र मेन्डेलको नियम',
+      'एकाइ १२: स्नायु र ग्रन्थी प्रणाली',
+      'एकाइ १३: रक्तसञ्चार प्रणाली र मुटुको बनावट',
+      'एकाइ १४: वातावरण, जैविक विविधता र जलवायु परिवर्तन',
+    ],
+  },
+  {
+    id: 'g10-soc-ne',
+    grade: '10',
+    subject: 'Social',
+    title: 'सामाजिक अध्ययन तथा मानव मूल्य (कक्षा १०)',
+    titleNe: 'सामाजिक अध्ययन',
+    medium: 'NE' as const,
+    pdfName: 'Class-10-Social-Nepali.pdf',
+    totalPages: 270,
+    size: '19.5 MB',
+    chapters: [
+      'एकाइ १: हामी र हाम्रो समाजको विकास',
+      'एकाइ २: विकास र विकासका पूर्वाधारहरू',
+      'एकाइ ३: हाम्रा सामाजिक मूल्य, परम्परा र मान्यता',
+      'एकाइ ४: सामाजिक समस्या र समाधानका उपायहरू',
+      'एकाइ ५: नागरिक सचेतना, मौलिक हक र संविधान',
+      'एकाइ ६: हाम्रो पृथ्वी, भूगोल र जलवायु',
+      'एकाइ ७: हाम्रो विगत र नेपालको गौरवमय इतिहास',
+      'एकाइ ८: आर्थिक क्रियाकलाप र राष्ट्रिय बजेट',
+      'एकाइ ९: अन्तर्राष्ट्रिय सम्बन्ध, शान्ति र सहयोग',
+    ],
+  },
+  {
+    id: 'g10-nep-ne',
+    grade: '10',
+    subject: 'Nepali',
+    title: 'अनिवार्य नेपाली (कक्षा १०)',
+    titleNe: 'नेपाली पाठ्यपुस्तक',
+    medium: 'NE' as const,
+    pdfName: 'Class-10-Nepali-CDC.pdf',
+    totalPages: 224,
+    size: '13.8 MB',
+    chapters: [
+      'पाठ १: उज्यालो यात्रा (कविता)',
+      'पाठ २: घरझगडा (कथा)',
+      'पाठ ३: चिकित्सा विज्ञान र मानव जीवन (निबन्ध)',
+      'पाठ ४: यस्तो कहिल्यै नहोस् (एकाङ्की)',
+      'पाठ ५: हाम्रो संस्कृति (निबन्ध)',
+      'पाठ ६: मेरो देशको माटो (कविता)',
+      'पाठ ७: व्याकरण: पदवर्ग, नाम, सर्वनाम र विशेषण',
+      'पाठ ८: काल, पक्ष, भाव र वाच्य परिवर्तन',
+      'पाठ ९: समास र विग्रह, शब्द निर्माण',
+      'पाठ १०: पत्रलेखन, निवेदन, प्रतिवेदन र सारांश लेखन',
+    ],
+  },
+  // Grade 9 English Medium
+  {
+    id: 'g9-sci-en',
+    grade: '9',
+    subject: 'Science',
+    title: 'Science & Technology (Grade 9)',
+    titleNe: 'विज्ञान तथा प्रविधि (कक्षा ९)',
+    medium: 'EN' as const,
+    pdfName: 'Class-9-Science-English.pdf',
+    totalPages: 220,
+    size: '15.5 MB',
+    chapters: [
+      'Unit 1: Measurement & Scientific Inquiry',
+      'Unit 2: Force, Motion & Newton Three Laws',
+      'Unit 3: Simple Machines & Mechanical Advantage',
+      'Unit 4: Work, Energy & Power in Everyday Life',
+      'Unit 5: Light: Reflection & Refraction Laws',
+      'Unit 6: Sound Waves, Frequency & Acoustics',
+      'Unit 7: Matter, Atoms & Chemical Formulas',
+      'Unit 8: Living Organisms & Five Kingdom Classification',
+      'Unit 9: Human Organ Systems, Nutrition & Health',
+    ],
+  },
+  {
+    id: 'g9-math-en',
+    grade: '9',
+    subject: 'Maths',
+    title: 'Compulsory Mathematics (Grade 9)',
+    titleNe: 'अनिवार्य गणित (कक्षा ९)',
+    medium: 'EN' as const,
+    pdfName: 'Class-9-Maths-English.pdf',
+    totalPages: 196,
+    size: '13.1 MB',
+    chapters: [
+      'Ch 1: Sets, Subsets & Cardinality Relations',
+      'Ch 2: Arithmetic: Profit & Loss, Discount & VAT',
+      'Ch 3: Mensuration: Perimeter & Area of Triangles',
+      'Ch 4: Algebraic Factorization, Formulas & Fractions',
+      'Ch 5: Linear Equations & Inequalities',
+      'Ch 6: Geometry: Parallel Lines, Angles & Triangles',
+      'Ch 7: Statistics: Mean, Median, Mode & Quartiles',
+      'Ch 8: Basic Probability & Experiments',
+    ],
+  },
+  // Grade 9 Nepali Medium
+  {
+    id: 'g9-soc-ne',
+    grade: '9',
+    subject: 'Social',
+    title: 'सामाजिक अध्ययन तथा मानव मूल्य (कक्षा ९)',
+    titleNe: 'सामाजिक अध्ययन (कक्षा ९)',
+    medium: 'NE' as const,
+    pdfName: 'Class-9-Social-Nepali.pdf',
+    totalPages: 230,
+    size: '16.2 MB',
+    chapters: [
+      'एकाइ १: हामी र हाम्रो समाज',
+      'एकाइ २: विकास र पूर्वाधारका आधारहरू',
+      'एकाइ ३: हाम्रा सामाजिक परम्परा, चालचलन र मूल्य',
+      'एकाइ ४: नागरिक चेतना, लोकतन्त्र र अधिकार',
+      'एकाइ ५: हाम्रो भूगोल, भू-बनौट र हावापानी',
+      'एकाइ ६: नेपालको इतिहास र ऐतिहासिक सम्पदा',
+    ],
+  },
+  {
+    id: 'g9-nep-ne',
+    grade: '9',
+    subject: 'Nepali',
+    title: 'अनिवार्य नेपाली (कक्षा ९)',
+    titleNe: 'नेपाली (कक्षा ९)',
+    medium: 'NE' as const,
+    pdfName: 'Class-9-Nepali-CDC.pdf',
+    totalPages: 188,
+    size: '11.5 MB',
+    chapters: [
+      'पाठ १: दुर्योधनको पश्चाताप (कविता)',
+      'पाठ २: नयाँ गोरेटो (कथा)',
+      'पाठ ३: प्रकृति र पर्यावरण (निबन्ध)',
+      'पाठ ४: व्याकरण: शब्दभेद, पदसङ्गति र कारक',
+      'पाठ ५: वाक्य गठन, शुद्ध लेखन र निबन्ध',
+    ],
+  },
+];
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
 const toNativePath = (path: string) => (path.startsWith('file://') ? path.replace('file://', '') : path);
@@ -3163,6 +3433,99 @@ export default function App() {
   );
   const hasBoundModel = isModelReady && Boolean(resolvedModelPath);
 
+  // Floating Draggable Guru AI Assistant & Folder/Book state
+  const windowDimensions = Dimensions.get('window');
+  const pan = useRef(new Animated.ValueXY({ x: windowDimensions.width - 74, y: windowDimensions.height - 190 })).current;
+  const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
+  const [activeBookModal, setActiveBookModal] = useState<{
+    id: string;
+    title: string;
+    titleNe: string;
+    medium: 'EN' | 'NE';
+    subject: string;
+    pdfName: string;
+    totalPages: number;
+    currentPage: number;
+    chapters: string[];
+  } | null>(null);
+  const [activeFolderSubject, setActiveFolderSubject] = useState<SubjectId | null>(null);
+  const [mediumFilter, setMediumFilter] = useState<'ALL' | 'EN' | 'NE'>('ALL');
+  const [showAllBooksView, setShowAllBooksView] = useState(false);
+  const [drawerPrompt, setDrawerPrompt] = useState('');
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4;
+      },
+      onPanResponderGrant: () => {
+        pan.setOffset({
+          x: (pan.x as any)._value || 0,
+          y: (pan.y as any)._value || 0,
+        });
+        pan.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
+      onPanResponderRelease: () => {
+        pan.flattenOffset();
+      },
+    })
+  ).current;
+
+  // Real-time metadata awareness of current student screen & chapter
+  const currentContextMetadata = useMemo(() => {
+    const gradeLabel = `Class ${user?.grade ?? grade ?? '10'}`;
+    if (activeBookModal) {
+      const chIdx = Math.min(
+        activeBookModal.chapters.length - 1,
+        Math.max(0, Math.floor((activeBookModal.currentPage / activeBookModal.totalPages) * activeBookModal.chapters.length))
+      );
+      return {
+        location: `${gradeLabel} • ${activeBookModal.subject} • ${activeBookModal.title}`,
+        page: `Page ${activeBookModal.currentPage} of ${activeBookModal.totalPages}`,
+        medium: activeBookModal.medium === 'EN' ? 'English Medium' : 'Nepali Medium',
+        details: `Reading ${activeBookModal.title} (${activeBookModal.pdfName})`,
+        subject: activeBookModal.subject,
+        chapter: activeBookModal.chapters[chIdx] || activeBookModal.title,
+      };
+    }
+    if (activeFolderSubject) {
+      const sub = subjects.find((s) => s.id === activeFolderSubject) || activeSubject;
+      return {
+        location: `${gradeLabel} • ${sub.title} Folder`,
+        page: 'Folder Explorer',
+        medium: language === 'EN' ? 'English Medium' : 'Nepali Medium',
+        details: `Exploring ${sub.title} chapters, notes, and model questions`,
+        subject: sub.title,
+        chapter: sub.title,
+      };
+    }
+    return {
+      location: `${gradeLabel} • ${activeSubject.title}`,
+      page: 'Dashboard',
+      medium: language === 'EN' ? 'English Medium' : 'Nepali Medium',
+      details: 'General study dashboard and quick revision',
+      subject: activeSubject.title,
+      chapter: activeSubject.title,
+    };
+  }, [user?.grade, grade, activeBookModal, activeFolderSubject, activeSubject, subjects, language]);
+
+  const askAiWithCurrentContext = (customQuery?: string) => {
+    const targetQuery = customQuery || drawerPrompt;
+    if (!targetQuery.trim()) return;
+
+    const contextualPrompt = `[Context: ${currentContextMetadata.location}, ${currentContextMetadata.page} - ${currentContextMetadata.chapter}]\nQuestion: ${targetQuery.trim()}`;
+
+    setPrompt(contextualPrompt);
+    setDrawerPrompt('');
+    setIsAiDrawerOpen(false);
+    setActiveTab('learn');
+    setTimeout(() => {
+      void sendPrompt();
+    }, 150);
+  };
+
   const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'paused' | 'done'>('idle');
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadProgressText, setDownloadProgressText] = useState('');
@@ -5167,125 +5530,526 @@ const formatDeterministicMathResponseStable = (text: string) => {
     </SafeAreaView>
   );
 
-  const renderHome = () => (
-    <ScrollView contentContainerStyle={styles.screenScroll}>
-      <View style={styles.homeHeader}>
-        <View>
-          <Text style={styles.homeHeaderTitle}>{ui.appName}</Text>
-          <Text style={styles.homeHeaderSubtitle}>{language === 'EN' ? 'English mode' : 'à¤¨à¥‡à¤ªà¤¾à¤²à¥€ mode'}</Text>
+  // 1. Books & PDF Vault Screen (English & Nepali Medium)
+  const renderBooksVault = () => {
+    const studentGrade = user?.grade ?? grade ?? '10';
+    const filteredBooks = BOOKS_CATALOG.filter((book) => {
+      const matchGrade = book.grade === studentGrade;
+      const matchMedium = mediumFilter === 'ALL' || book.medium === mediumFilter;
+      return matchGrade && matchMedium;
+    });
+
+    return (
+      <View style={styles.vaultContainer}>
+        {/* Top Navigation Bar */}
+        <View style={styles.vaultHeader}>
+          <TouchableOpacity style={styles.vaultBackButton} onPress={() => setShowAllBooksView(false)}>
+            <ChevronDown size={22} color="#0f172a" style={{ transform: [{ rotate: '90deg' }] }} />
+          </TouchableOpacity>
+          <View style={styles.vaultTitleWrapper}>
+            <Text style={styles.vaultMainTitle}>{language === 'EN' ? 'Official CDC Textbooks' : 'पाठ्यपुस्तक तथा स्रोतहरू'}</Text>
+            <Text style={styles.vaultSubtitle}>{`Class ${studentGrade} • ${filteredBooks.length} Books Available Offline`}</Text>
+          </View>
+          <TouchableOpacity style={styles.vaultLangButton} onPress={switchLanguage}>
+            <Text style={styles.vaultLangText}>{language}</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.homeLanguageButton} onPress={switchLanguage}>
-          <Globe size={18} color='#1a73e8' />
-          <Text style={styles.homeLanguageButtonText}>{language === 'EN' ? 'NE' : 'EN'}</Text>
+
+        {/* Medium Filter Tabs: All | English Medium | Nepali Medium */}
+        <View style={styles.mediumFilterRow}>
+          {[
+            { id: 'ALL', label: language === 'EN' ? 'All Books' : 'सबै किताबहरू' },
+            { id: 'EN', label: 'English Medium (EN)' },
+            { id: 'NE', label: 'नेपाली माध्यम (NE)' },
+          ].map((tab) => {
+            const active = mediumFilter === tab.id;
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                style={[styles.mediumFilterPill, active && styles.mediumFilterPillActive]}
+                onPress={() => setMediumFilter(tab.id as any)}
+              >
+                <Text style={[styles.mediumFilterPillText, active && styles.mediumFilterPillTextActive]}>{tab.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Book List */}
+        <ScrollView contentContainerStyle={styles.vaultScrollContent} showsVerticalScrollIndicator={false}>
+          {filteredBooks.map((book) => {
+            const isEn = book.medium === 'EN';
+            return (
+              <View key={book.id} style={styles.bookVaultCard}>
+                <View style={styles.bookVaultCardHeader}>
+                  <View style={[styles.bookVaultIconBadge, isEn ? styles.bookBadgeBlue : styles.bookBadgeGreen]}>
+                    <BookOpen size={22} color={isEn ? '#1a73e8' : '#16a34a'} />
+                  </View>
+                  <View style={styles.bookVaultInfo}>
+                    <View style={styles.bookTagsRow}>
+                      <View style={[styles.mediumTag, isEn ? styles.mediumTagBlue : styles.mediumTagGreen]}>
+                        <Text style={[styles.mediumTagText, isEn ? styles.mediumTagTextBlue : styles.mediumTagTextGreen]}>
+                          {isEn ? 'English Medium' : 'नेपाली माध्यम'}
+                        </Text>
+                      </View>
+                      <Text style={styles.bookPageCountText}>{`${book.totalPages} Pages • ${book.size}`}</Text>
+                    </View>
+                    <Text style={styles.bookVaultTitle}>{language === 'EN' ? book.title : book.titleNe}</Text>
+                    <Text style={styles.bookPdfFileNameText}>{book.pdfName}</Text>
+                  </View>
+                </View>
+
+                {/* Chapter Snapshot Preview */}
+                <View style={styles.bookChaptersPreview}>
+                  <Text style={styles.chaptersPreviewHeading}>{`${book.chapters.length} Units / Chapters Included:`}</Text>
+                  <View style={styles.chaptersListMini}>
+                    {book.chapters.slice(0, 3).map((ch, idx) => (
+                      <Text key={idx} style={styles.chapterItemBullet} numberOfLines={1}>
+                        • {ch}
+                      </Text>
+                    ))}
+                    {book.chapters.length > 3 && (
+                      <Text style={styles.chapterMoreCount}>{`+ ${book.chapters.length - 3} more chapters`}</Text>
+                    )}
+                  </View>
+                </View>
+
+                {/* Actions */}
+                <View style={styles.bookVaultActionsRow}>
+                  <TouchableOpacity
+                    style={styles.openBookPrimaryButton}
+                    onPress={() => {
+                      setActiveBookModal({
+                        ...book,
+                        currentPage: 1,
+                      });
+                    }}
+                  >
+                    <Eye size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.openBookPrimaryButtonText}>{language === 'EN' ? 'Read Offline' : 'किताब पढ्नुहोस्'}</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.askGuruBookButton}
+                    onPress={() => {
+                      setActiveBookModal({
+                        ...book,
+                        currentPage: 1,
+                      });
+                      setIsAiDrawerOpen(true);
+                    }}
+                  >
+                    <Bot size={16} color="#1a73e8" style={{ marginRight: 6 }} />
+                    <Text style={styles.askGuruBookButtonText}>Ask Guru AI</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // 2. Book Reader / PDF Viewer Modal
+  const renderBookReaderModal = () => {
+    if (!activeBookModal) return null;
+    const isEn = activeBookModal.medium === 'EN';
+
+    return (
+      <Modal visible={Boolean(activeBookModal)} animationType="slide" onRequestClose={() => setActiveBookModal(null)}>
+        <SafeAreaView style={styles.bookReaderContainer}>
+          <StatusBar barStyle="dark-content" />
+          <View style={styles.readerHeader}>
+            <TouchableOpacity style={styles.readerCloseButton} onPress={() => setActiveBookModal(null)}>
+              <X size={22} color="#0f172a" />
+            </TouchableOpacity>
+            <View style={styles.readerHeaderTitleContainer}>
+              <Text style={styles.readerBookTitle} numberOfLines={1}>
+                {activeBookModal.title}
+              </Text>
+              <Text style={styles.readerPageIndicator}>
+                {`Page ${activeBookModal.currentPage} of ${activeBookModal.totalPages} • ${isEn ? 'English' : 'नेपाली'}`}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.readerAiIconButton}
+              onPress={() => {
+                setIsAiDrawerOpen(true);
+              }}
+            >
+              <Bot size={20} color="#1a73e8" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Reader Content Body */}
+          <ScrollView contentContainerStyle={styles.readerBodyScroll} showsVerticalScrollIndicator={false}>
+            <View style={styles.readerPageCard}>
+              <View style={styles.readerPageTopBadge}>
+                <Text style={styles.readerPageTopBadgeText}>{`OFFICIAL CDC CURRICULUM • ${activeBookModal.subject.toUpperCase()}`}</Text>
+              </View>
+              <Text style={styles.readerCurrentChapterTitle}>
+                {activeBookModal.chapters[Math.min(activeBookModal.chapters.length - 1, Math.max(0, Math.floor((activeBookModal.currentPage / activeBookModal.totalPages) * activeBookModal.chapters.length)))] || activeBookModal.title}
+              </Text>
+              <Text style={styles.readerSampleContentText}>
+                {language === 'EN'
+                  ? `This chapter covers complete curriculum formulas, theoretical proofs, definitions, and model examination questions strictly mapped to the National Examination Board (NEB) 2083 specifications.\n\nTap on any topic below or ask Guru AI to explain any paragraph or step-by-step calculation offline.`
+                  : `यस एकाइमा राष्ट्रिय परीक्षा बोर्ड (NEB) २०८३ को पाठ्यक्रम अनुसारका मुख्य सिद्धान्तहरू, सूत्रहरू, र नमुना प्रश्न उत्तरहरू समावेश छन्। कुनै पनि जटिल समस्या बुझ्न तलको बटन मार्फत Guru AI सँग सिधै सोध्न सक्नुहुन्छ।`}
+              </Text>
+
+              {/* Chapter Table of Contents in PDF */}
+              <Text style={styles.readerTocHeading}>{language === 'EN' ? 'Chapter Index & Quick Jump' : 'एकाइ सूची र सिधा पहुँच'}:</Text>
+              {activeBookModal.chapters.map((ch, idx) => {
+                const targetPage = Math.max(1, Math.round(((idx + 1) / activeBookModal.chapters.length) * activeBookModal.totalPages));
+                const isSelected = Math.floor((activeBookModal.currentPage / activeBookModal.totalPages) * activeBookModal.chapters.length) === idx;
+                return (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[styles.readerTocRow, isSelected && styles.readerTocRowActive]}
+                    onPress={() => {
+                      setActiveBookModal({
+                        ...activeBookModal,
+                        currentPage: targetPage,
+                      });
+                    }}
+                  >
+                    <Text style={[styles.readerTocIndex, isSelected && styles.readerTocIndexActive]}>{idx + 1}</Text>
+                    <Text style={[styles.readerTocTitle, isSelected && styles.readerTocTitleActive]}>{ch}</Text>
+                    <Text style={styles.readerTocPageNum}>{`p. ${targetPage}`}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </ScrollView>
+
+          {/* Bottom Context-Aware Floating Bar */}
+          <View style={styles.readerBottomBar}>
+            <View style={styles.readerBottomContextInfo}>
+              <Text style={styles.readerBottomContextTitle}>Ask Guru AI About This Page</Text>
+              <Text style={styles.readerBottomContextSub}>{`Page ${activeBookModal.currentPage} • ${activeBookModal.chapters[0]}`}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.readerAskAiButton}
+              onPress={() => {
+                setIsAiDrawerOpen(true);
+              }}
+            >
+              <Bot size={18} color="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={styles.readerAskAiButtonText}>Ask AI</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  // 3. Subject Folder Detail Modal
+  const renderFolderModal = () => {
+    if (!activeFolderSubject) return null;
+    const sub = subjects.find((s) => s.id === activeFolderSubject) || activeSubject;
+    const studentGrade = user?.grade ?? grade ?? '10';
+    const matchingBooks = BOOKS_CATALOG.filter((b) => b.grade === studentGrade && b.subject.toLowerCase().includes(sub.id.toLowerCase()));
+
+    return (
+      <Modal visible={Boolean(activeFolderSubject)} animationType="slide" onRequestClose={() => setActiveFolderSubject(null)}>
+        <SafeAreaView style={styles.folderModalContainer}>
+          <StatusBar barStyle="dark-content" />
+          <View style={styles.folderModalHeader}>
+            <TouchableOpacity style={styles.folderModalBackButton} onPress={() => setActiveFolderSubject(null)}>
+              <ChevronDown size={22} color="#0f172a" style={{ transform: [{ rotate: '90deg' }] }} />
+            </TouchableOpacity>
+            <View style={styles.folderModalTitleWrapper}>
+              <Text style={styles.folderModalTitle}>{`${sub.title} Folder`}</Text>
+              <Text style={styles.folderModalSubtitle}>{`Class ${studentGrade} Resource Vault`}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.folderAiButton}
+              onPress={() => {
+                setIsAiDrawerOpen(true);
+              }}
+            >
+              <Bot size={20} color="#1a73e8" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.folderModalScroll} showsVerticalScrollIndicator={false}>
+            {/* Subject Overview Card */}
+            <View style={styles.folderOverviewCard}>
+              <Folder size={28} color="#1a73e8" fill="#eff6ff" style={{ marginBottom: 8 }} />
+              <Text style={styles.folderOverviewTitle}>{sub.title}</Text>
+              <Text style={styles.folderOverviewDescription}>{sub.promptHint}</Text>
+            </View>
+
+            {/* Matching Textbooks in this Folder */}
+            <Text style={styles.folderSectionTitle}>Official Textbooks in this Folder:</Text>
+            {matchingBooks.map((b) => (
+              <TouchableOpacity
+                key={b.id}
+                style={styles.folderBookItem}
+                onPress={() => {
+                  setActiveBookModal({ ...b, currentPage: 1 });
+                }}
+              >
+                <BookOpen size={20} color="#1a73e8" style={{ marginRight: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.folderBookItemTitle}>{language === 'EN' ? b.title : b.titleNe}</Text>
+                  <Text style={styles.folderBookItemSub}>{`${b.medium === 'EN' ? 'English Medium' : 'Nepali Medium'} • ${b.totalPages} pages`}</Text>
+                </View>
+                <ChevronRight size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            ))}
+
+            {/* Quick AI Action Card */}
+            <TouchableOpacity
+              style={styles.folderAiActionCard}
+              onPress={() => {
+                setIsAiDrawerOpen(true);
+              }}
+            >
+              <Bot size={24} color="#1a73e8" style={{ marginRight: 12 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.folderAiActionTitle}>Ask Guru AI Tutor</Text>
+                <Text style={styles.folderAiActionSub}>Get instant step-by-step answers for {sub.title} offline</Text>
+              </View>
+              <ChevronRight size={18} color="#1a73e8" />
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  // 4. Floating Guru AI Assistant Side Drawer / Pop-up
+  const renderFloatingAiDrawer = () => {
+    return (
+      <Modal visible={isAiDrawerOpen} animationType="slide" transparent onRequestClose={() => setIsAiDrawerOpen(false)}>
+        <KeyboardAvoidingView style={styles.aiDrawerOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={styles.aiDrawerBackdrop} activeOpacity={1} onPress={() => setIsAiDrawerOpen(false)} />
+          <View style={styles.aiDrawerContainer}>
+            {/* Drawer Header */}
+            <View style={styles.aiDrawerHeader}>
+              <View style={styles.aiDrawerHeaderLeft}>
+                <Image source={logoSource} style={styles.aiDrawerLogo} />
+                <View>
+                  <Text style={styles.aiDrawerTitle}>Guru AI Assistant</Text>
+                  <Text style={styles.aiDrawerStatus}>100% Offline Edge AI</Text>
+                </View>
+              </View>
+              <TouchableOpacity style={styles.aiDrawerCloseButton} onPress={() => setIsAiDrawerOpen(false)}>
+                <X size={20} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Current Context Metadata Badge */}
+            <View style={styles.contextMetadataPill}>
+              <Text style={styles.contextMetadataLocation} numberOfLines={1}>
+                📍 {currentContextMetadata.location}
+              </Text>
+              <Text style={styles.contextMetadataDetails} numberOfLines={1}>
+                {`${currentContextMetadata.page} • ${currentContextMetadata.chapter}`}
+              </Text>
+            </View>
+
+            {/* Quick Context-Aware Action Chips */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.contextChipsRow}>
+              {[
+                { label: '💡 Explain formulas & concepts', query: `Explain the key concepts and formulas in ${currentContextMetadata.chapter}` },
+                { label: '📝 3 SEE practice questions', query: `Give me 3 SEE examination questions from ${currentContextMetadata.chapter} with solutions` },
+                { label: '🇳🇵 नेपालीमा सरल व्याख्या', query: `${currentContextMetadata.chapter} को मुख्य कुराहरू नेपालीमा सरल भाषामा व्याख्या गर्नुहोस्` },
+                { label: '❓ Summarize key definitions', query: `Provide a quick summary of important definitions in ${currentContextMetadata.chapter}` },
+              ].map((chip, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={styles.contextChipButton}
+                  onPress={() => {
+                    askAiWithCurrentContext(chip.query);
+                  }}
+                >
+                  <Text style={styles.contextChipText}>{chip.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Chat List */}
+            <FlatList
+              data={activeMessages.slice(-6)}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.drawerChatList}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <View style={item.isUser ? styles.drawerUserBubble : styles.drawerBotBubble}>
+                  <Text style={item.isUser ? styles.drawerUserText : styles.drawerBotText}>
+                    {normalizeTutorTextBase(item.text)}
+                  </Text>
+                </View>
+              )}
+            />
+
+            {/* Drawer Compose Bar */}
+            <View style={styles.drawerComposeBar}>
+              <TextInput
+                style={styles.drawerInput}
+                value={drawerPrompt}
+                onChangeText={setDrawerPrompt}
+                placeholder={`Ask Guru about ${currentContextMetadata.chapter}...`}
+                placeholderTextColor="#94a3b8"
+                multiline
+              />
+              <TouchableOpacity
+                style={[styles.drawerSendButton, !drawerPrompt.trim() && styles.drawerSendButtonDisabled]}
+                onPress={() => askAiWithCurrentContext()}
+                disabled={!drawerPrompt.trim()}
+              >
+                <Send size={18} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  };
+
+  // 5. Floating Draggable Guru Logo Bubble
+  const renderFloatingBubble = () => {
+    if (screen !== 'main') return null;
+
+    return (
+      <Animated.View
+        style={[
+          styles.floatingBubbleContainer,
+          {
+            transform: pan.getTranslateTransform(),
+          },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <TouchableOpacity
+          style={styles.floatingBubbleCircle}
+          activeOpacity={0.85}
+          onPress={() => {
+            setIsAiDrawerOpen(true);
+          }}
+        >
+          <Image source={logoSource} style={styles.floatingBubbleLogo} />
+          <View style={styles.floatingAiDot}>
+            <Text style={styles.floatingAiDotText}>AI</Text>
+          </View>
         </TouchableOpacity>
-      </View>
+      </Animated.View>
+    );
+  };
 
-      <Text style={styles.sectionTitle}>{`${ui.greeting}, ${user?.name ?? 'Student'}`}</Text>
-      <Text style={styles.sectionBody}>{ui.startPrompt}</Text>
+  const renderHome = () => {
+    if (showAllBooksView) return renderBooksVault();
 
-      <View style={styles.heroCard}>
-        <View style={styles.heroHeader}>
-          <Text style={styles.heroEyebrow}>{ui.yourClass}</Text>
-          <Text style={styles.heroEyebrow}>{`Class ${user?.grade ?? grade ?? '4'}`}</Text>
-        </View>
-        <Text style={styles.heroTitle}>{ui.askQuestionTitle}</Text>
-        <Text style={styles.heroText}>{ui.askQuestionText}</Text>
-        <Text style={styles.subjectLabel}>{ui.subjectLabel}</Text>
-        {renderSubjectChips()}
-      </View>
+    const studentGrade = user?.grade ?? grade ?? '10';
+    const folderSubjects = [
+      { id: 'science', title: 'Science & Tech', titleNe: 'विज्ञान तथा प्रविधि', icon: BookOpen, color: '#1a73e8', bg: '#eff6ff', border: '#bfdbfe', chapters: 15, pages: 240 },
+      { id: 'math', title: 'Compulsory Maths', titleNe: 'अनिवार्य गणित', icon: BookOpen, color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', chapters: 14, pages: 212 },
+      { id: 'social', title: 'Social Studies', titleNe: 'सामाजिक अध्ययन', icon: Globe, color: '#f59e0b', bg: '#fef3c7', border: '#fde68a', chapters: 9, pages: 270 },
+      { id: 'nepali', title: 'Nepali', titleNe: 'अनिवार्य नेपाली', icon: Book, color: '#ef4444', bg: '#fef2f2', border: '#fecaca', chapters: 10, pages: 224 },
+      { id: 'english', title: 'Compulsory English', titleNe: 'अंग्रेजी', icon: BookOpen, color: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe', chapters: 10, pages: 198 },
+      { id: 'computer', title: 'Optional Mathematics', titleNe: 'ऐच्छिक गणित', icon: Layers, color: '#0ea5e9', bg: '#f0f9ff', border: '#bae6fd', chapters: 9, pages: 256 },
+    ];
 
-      {!hasBoundModel && (
-        <View style={styles.downloadHeroCard}>
-          <View style={styles.downloadHeroHeader}>
-            <Download size={22} color="#1a73e8" />
-            <Text style={styles.downloadHeroTitle}>Download Offline Study Resources</Text>
+    return (
+      <ScrollView contentContainerStyle={styles.screenScroll} showsVerticalScrollIndicator={false}>
+        {/* Top Header */}
+        <View style={styles.homeHeader}>
+          <View>
+            <Text style={styles.homeHeaderTitle}>{ui.appName}</Text>
+            <View style={styles.gradeHeaderPill}>
+              <Text style={styles.gradeHeaderPillText}>{`Class ${studentGrade}`}</Text>
+            </View>
           </View>
-          <Text style={styles.downloadHeroDescription}>
-            Download all the study resources you need for offline study (2.4 GB) once over Wi-Fi. Once downloaded, Guru runs 100% offline forever without internet.
+          <TouchableOpacity style={styles.homeLanguageButton} onPress={switchLanguage}>
+            <Globe size={18} color="#1a73e8" />
+            <Text style={styles.homeLanguageButtonText}>{language === 'EN' ? 'NE' : 'EN'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.sectionTitle}>{`${ui.greeting}, ${user?.name ?? 'Student'}`}</Text>
+        <Text style={styles.sectionBody}>Choose a subject folder or read official CDC textbooks offline.</Text>
+
+        {/* HERO MIDDLE CARD: SEE ALL BOOKS */}
+        <TouchableOpacity
+          style={styles.seeAllBooksHeroCard}
+          onPress={() => setShowAllBooksView(true)}
+          activeOpacity={0.88}
+        >
+          <View style={styles.seeAllBooksLeft}>
+            <View style={styles.seeAllBooksIconCircle}>
+              <BookOpen size={26} color="#ffffff" />
+            </View>
+            <View style={styles.seeAllBooksCopy}>
+              <Text style={styles.seeAllBooksTitle}>
+                {language === 'EN' ? 'Official CDC Textbooks' : 'सबै पाठ्यपुस्तकहरू हेर्नुहोस्'}
+              </Text>
+              <Text style={styles.seeAllBooksSubtitle}>
+                {language === 'EN' ? 'English & Nepali Medium • PDF Vault' : 'अंग्रेजी र नेपाली माध्यम • अफलाइन किताबहरू'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.seeAllBooksActionBtn}>
+            <Text style={styles.seeAllBooksActionBtnText}>{language === 'EN' ? 'See All Books' : 'किताबहरू'}</Text>
+            <ChevronRight size={16} color="#ffffff" />
+          </View>
+        </TouchableOpacity>
+
+        {/* Interactive Subject Folders Grid Header */}
+        <View style={styles.folderSectionHeaderRow}>
+          <FolderOpen size={20} color="#0f172a" style={{ marginRight: 6 }} />
+          <Text style={styles.folderSectionTitleText}>
+            {language === 'EN' ? 'Subject Resource Folders' : 'विषयगत फोल्डरहरू'}
           </Text>
-
-          {isDownloadingModel ? (
-            <View style={styles.downloadProgressContainer}>
-              <View style={styles.progressBarBackground}>
-                <View style={[styles.progressBarFill, { width: `${Math.max(2, Math.round(downloadProgress * 100))}%` }]} />
-              </View>
-              <Text style={styles.downloadProgressLabel}>{downloadProgressText || 'Downloading offline study resources...'}</Text>
-              <TouchableOpacity style={styles.cancelDownloadButton} onPress={cancelModelDownload}>
-                <Text style={styles.cancelDownloadButtonText}>Cancel Download</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.downloadActionsColumn}>
-              <TouchableOpacity style={styles.primaryDownloadButton} onPress={startModelDownload}>
-                <Download size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.primaryDownloadButtonText}>Download Study Resources (2.4 GB) [Wi-Fi]</Text>
-              </TouchableOpacity>
-              <View style={styles.secondaryActionsRow}>
-                <TouchableOpacity style={styles.secondaryChoiceButton} onPress={() => void chooseModelFolder()}>
-                  <Text style={styles.secondaryChoiceButtonText}>I already have the resources file</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.secondaryChoiceButton} onPress={() => void bootApp()}>
-                  <Text style={styles.secondaryChoiceButtonText}>Scan phone</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
         </View>
-      )}
 
-      {hasBoundModel && (
-        <View style={styles.statusCard}>
-          <View style={styles.statusHeader}>
-            <BrainCircuit size={18} color="#1a73e8" />
-            <Text style={[styles.statusBadgeText, { color: '#1a73e8' }]}>Offline study resources active</Text>
+        {/* 2x3 Grid of Interactive Subject Folders */}
+        <View style={styles.foldersGridContainer}>
+          {folderSubjects.map((f) => (
+            <TouchableOpacity
+              key={f.id}
+              style={[styles.subjectFolderCard, { backgroundColor: f.bg, borderColor: f.border }]}
+              onPress={() => setActiveFolderSubject(f.id as any)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.folderCardTopRow}>
+                <Folder size={26} color={f.color} fill={f.bg} />
+                <View style={[styles.folderBadgePill, { backgroundColor: f.color }]}>
+                  <Text style={styles.folderBadgePillText}>{`${f.chapters} Units`}</Text>
+                </View>
+              </View>
+              <Text style={styles.folderCardTitle} numberOfLines={1}>
+                {language === 'EN' ? f.title : f.titleNe}
+              </Text>
+              <Text style={styles.folderCardSubtext}>{`${f.pages} Pages • Model Papers`}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Daily Streak & Quick Quiz */}
+        <View style={styles.dualCardRow}>
+          <View style={[styles.miniCard, styles.streakCard]}>
+            <Text style={styles.miniCardLabel}>{ui.streakTitle}</Text>
+            <Text style={styles.miniCardValue}>{dailyStreak}</Text>
+            <Text style={styles.miniCardText}>{ui.streakText}</Text>
           </View>
-          <Text style={styles.statusBody}>{modelStatus}</Text>
-          <View style={styles.statusActionsRow}>
-            <TouchableOpacity style={styles.refreshButton} onPress={() => void chooseModelFolder()} disabled={isModelSetupBusy}>
-              <Text style={styles.refreshButtonText}>Change resources file</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.refreshButtonSecondary} onPress={() => void bootApp()} disabled={isModelSetupBusy}>
-              <Text style={styles.refreshButtonSecondaryText}>Rescan resources</Text>
-            </TouchableOpacity>
+          <View style={styles.miniCard}>
+            <Text style={styles.miniCardLabel}>{ui.currentTopic}</Text>
+            <Text style={styles.miniCardValueSmall}>{activeSubject.title}</Text>
+            <Text style={styles.miniCardText}>{activeSubject.promptHint}</Text>
           </View>
         </View>
-      )}
 
-      <View style={styles.dualCardRow}>
-        <View style={[styles.miniCard, styles.streakCard]}>
-          <Text style={styles.miniCardLabel}>{ui.streakTitle}</Text>
-          <Text style={styles.miniCardValue}>{dailyStreak}</Text>
-          <Text style={styles.miniCardText}>{ui.streakText}</Text>
-        </View>
-        <View style={styles.miniCard}>
-          <Text style={styles.miniCardLabel}>{ui.currentTopic}</Text>
-          <Text style={styles.miniCardValueSmall}>{activeSubject.title}</Text>
-          <Text style={styles.miniCardText}>{activeSubject.promptHint}</Text>
-        </View>
-      </View>
+        {renderQuizCard()}
 
-      <View style={styles.focusCard}>
-        <Text style={styles.focusTitle}>{ui.focusTitle}</Text>
-        <Text style={styles.focusText}>{ui.focusText}</Text>
-      </View>
-
-      <TouchableOpacity style={styles.actionCard} onPress={createNewChat}>
-        <MessageSquare size={22} color='#1a73e8' />
-        <View style={styles.actionCardCopy}>
-          <Text style={styles.actionCardTitle}>{ui.askQuestionTitle}</Text>
-          <Text style={styles.actionCardText}>{activeSubject.promptHint}</Text>
+        <View style={styles.focusCard}>
+          <Text style={styles.focusTitle}>{ui.focusTitle}</Text>
+          <Text style={styles.focusText}>{ui.focusText}</Text>
         </View>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.actionCard} onPress={() => setActiveTab('progress')}>
-        <PieChart size={22} color='#1a73e8' />
-        <View style={styles.actionCardCopy}>
-          <Text style={styles.actionCardTitle}>{ui.progressTitle}</Text>
-          <Text style={styles.actionCardText}>{ui.progressText}</Text>
-        </View>
-      </TouchableOpacity>
-    </ScrollView>
-  );
+      </ScrollView>
+    );
+  };
   const renderLearn = () => (
     <View style={styles.container}>
       <View style={styles.learnHeader}>
@@ -5585,13 +6349,26 @@ const formatDeterministicMathResponseStable = (text: string) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
           return (
-            <TouchableOpacity key={item.id} style={styles.bottomTab} onPress={() => setActiveTab(item.id as TabState)}>
+            <TouchableOpacity
+              key={item.id}
+              style={styles.bottomTab}
+              onPress={() => {
+                setShowAllBooksView(false);
+                setActiveTab(item.id as TabState);
+              }}
+            >
               <Icon size={20} color={active ? '#1a73e8' : '#5f6368'} />
               <Text style={[styles.bottomTabText, active && styles.bottomTabTextActive]}>{item.label}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
+
+      {/* Persistent Modals & Floating Draggable Guru AI Assistant */}
+      {renderBookReaderModal()}
+      {renderFolderModal()}
+      {renderFloatingAiDrawer()}
+      {renderFloatingBubble()}
     </SafeAreaView>
   );
 }
@@ -6961,6 +7738,801 @@ const styles = StyleSheet.create({
   gradeChoiceSubtitle: {
     fontSize: 12,
     color: '#64748b',
+  },
+  gradeHeaderPill: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    alignSelf: 'flex-start',
+    marginTop: 3,
+  },
+  gradeHeaderPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1a73e8',
+  },
+  seeAllBooksHeroCard: {
+    width: '100%',
+    backgroundColor: '#1a73e8',
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 14,
+    marginBottom: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#1a73e8',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  seeAllBooksLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  seeAllBooksIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  seeAllBooksCopy: {
+    flex: 1,
+  },
+  seeAllBooksTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  seeAllBooksSubtitle: {
+    fontSize: 12,
+    color: '#e0e7ff',
+  },
+  seeAllBooksActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  seeAllBooksActionBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginRight: 2,
+  },
+  folderSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  folderSectionTitleText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  foldersGridContainer: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  subjectFolderCard: {
+    width: '48.5%',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  folderCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  folderBadgePill: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  folderBadgePillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  folderCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  folderCardSubtext: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  vaultContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  vaultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  vaultBackButton: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+  },
+  vaultTitleWrapper: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  vaultMainTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  vaultSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  vaultLangButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  vaultLangText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1a73e8',
+  },
+  mediumFilterRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  mediumFilterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  mediumFilterPillActive: {
+    backgroundColor: '#1a73e8',
+    borderColor: '#1a73e8',
+  },
+  mediumFilterPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  mediumFilterPillTextActive: {
+    color: '#ffffff',
+  },
+  vaultScrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  bookVaultCard: {
+    width: '100%',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  bookVaultCardHeader: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  bookVaultIconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  bookBadgeBlue: {
+    backgroundColor: '#eff6ff',
+  },
+  bookBadgeGreen: {
+    backgroundColor: '#f0fdf4',
+  },
+  bookVaultInfo: {
+    flex: 1,
+  },
+  bookTagsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  mediumTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  mediumTagBlue: {
+    backgroundColor: '#eff6ff',
+  },
+  mediumTagGreen: {
+    backgroundColor: '#f0fdf4',
+  },
+  mediumTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  mediumTagTextBlue: {
+    color: '#1a73e8',
+  },
+  mediumTagTextGreen: {
+    color: '#16a34a',
+  },
+  bookPageCountText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  bookVaultTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  bookPdfFileNameText: {
+    fontSize: 11,
+    color: '#94a3b8',
+  },
+  bookChaptersPreview: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
+  chaptersPreviewHeading: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  chaptersListMini: {
+    gap: 2,
+  },
+  chapterItemBullet: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  chapterMoreCount: {
+    fontSize: 11,
+    color: '#1a73e8',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  bookVaultActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  openBookPrimaryButton: {
+    flex: 1,
+    backgroundColor: '#1a73e8',
+    borderRadius: 10,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  openBookPrimaryButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  askGuruBookButton: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  askGuruBookButtonText: {
+    color: '#1a73e8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  bookReaderContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  readerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  readerCloseButton: {
+    padding: 6,
+  },
+  readerHeaderTitleContainer: {
+    flex: 1,
+    marginHorizontal: 10,
+  },
+  readerBookTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  readerPageIndicator: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  readerAiIconButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#eff6ff',
+  },
+  readerBodyScroll: {
+    padding: 16,
+    paddingBottom: 90,
+  },
+  readerPageCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  readerPageTopBadge: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 10,
+  },
+  readerPageTopBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  readerCurrentChapterTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  readerSampleContentText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#334155',
+    marginBottom: 18,
+  },
+  readerTocHeading: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  readerTocRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f8fafc',
+  },
+  readerTocRowActive: {
+    backgroundColor: '#eff6ff',
+  },
+  readerTocIndex: {
+    width: 24,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  readerTocIndexActive: {
+    color: '#1a73e8',
+  },
+  readerTocTitle: {
+    flex: 1,
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  readerTocTitleActive: {
+    color: '#1a73e8',
+    fontWeight: '700',
+  },
+  readerTocPageNum: {
+    fontSize: 11,
+    color: '#94a3b8',
+  },
+  readerBottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  readerBottomContextInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
+  readerBottomContextTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  readerBottomContextSub: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  readerAskAiButton: {
+    backgroundColor: '#1a73e8',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  readerAskAiButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  folderModalContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  folderModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  folderModalBackButton: {
+    padding: 6,
+  },
+  folderModalTitleWrapper: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  folderModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  folderModalSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  folderAiButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#eff6ff',
+  },
+  folderModalScroll: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  folderOverviewCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  folderOverviewTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  folderOverviewDescription: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 18,
+  },
+  folderSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 10,
+  },
+  folderBookItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  folderBookItemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  folderBookItemSub: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  folderAiActionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  folderAiActionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1a73e8',
+    marginBottom: 2,
+  },
+  folderAiActionSub: {
+    fontSize: 11,
+    color: '#3b82f6',
+  },
+  aiDrawerOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  aiDrawerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
+  aiDrawerContainer: {
+    width: '100%',
+    height: '75%',
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 16,
+    paddingBottom: 20,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  aiDrawerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    marginBottom: 10,
+  },
+  aiDrawerHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  aiDrawerLogo: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 10,
+  },
+  aiDrawerTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  aiDrawerStatus: {
+    fontSize: 11,
+    color: '#16a34a',
+    fontWeight: '700',
+  },
+  aiDrawerCloseButton: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+  },
+  contextMetadataPill: {
+    backgroundColor: '#f8fafc',
+    marginHorizontal: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 10,
+  },
+  contextMetadataLocation: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1a73e8',
+    marginBottom: 2,
+  },
+  contextMetadataDetails: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  contextChipsRow: {
+    paddingHorizontal: 16,
+    gap: 8,
+    marginBottom: 10,
+  },
+  contextChipButton: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  contextChipText: {
+    fontSize: 11,
+    color: '#1a73e8',
+    fontWeight: '600',
+  },
+  drawerChatList: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  drawerUserBubble: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#1a73e8',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    maxWidth: '82%',
+    marginBottom: 8,
+  },
+  drawerUserText: {
+    color: '#ffffff',
+    fontSize: 13,
+  },
+  drawerBotBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    maxWidth: '88%',
+    marginBottom: 8,
+  },
+  drawerBotText: {
+    color: '#0f172a',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  drawerComposeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  drawerInput: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    fontSize: 13,
+    maxHeight: 80,
+    color: '#0f172a',
+  },
+  drawerSendButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#1a73e8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  drawerSendButtonDisabled: {
+    backgroundColor: '#cbd5e1',
+  },
+  floatingBubbleContainer: {
+    position: 'absolute',
+    zIndex: 9999,
+    elevation: 10,
+  },
+  floatingBubbleCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#1a73e8',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 2.5,
+    borderColor: '#1a73e8',
+  },
+  floatingBubbleLogo: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+  },
+  floatingAiDot: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#16a34a',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+  },
+  floatingAiDotText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '800',
   },
 });
 
