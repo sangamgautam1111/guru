@@ -803,6 +803,45 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
     }
 
     @ReactMethod
+    fun openAssetPdf(assetRelativePath: String, promise: Promise) {
+        worker.execute {
+            try {
+                val context = reactApplicationContext
+                val fullAssetPath = "grade10/$assetRelativePath"
+                val inputStream = context.assets.open(fullAssetPath)
+                val cleanName = assetRelativePath.substringAfterLast("/").replace(" ", "_")
+                val outFile = File(context.cacheDir, cleanName)
+
+                if (!outFile.exists() || outFile.length() == 0L) {
+                    outFile.outputStream().use { output ->
+                        inputStream.copyTo(output)
+                    }
+                } else {
+                    inputStream.close()
+                }
+
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    outFile
+                )
+
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/pdf")
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+
+                context.startActivity(intent)
+                promise.resolve(true)
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to open asset PDF: ${e.message}", e)
+                promise.reject("PDF_OPEN_ERROR", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
     fun cancelGeneration(promise: Promise) {
         val currentSession = activeSession
         if (currentSession == null || activeRequestId == null) {
@@ -830,3 +869,4 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         super.invalidate()
     }
 }
+
