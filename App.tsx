@@ -23,20 +23,24 @@ import {
   ArrowLeft,
   BookOpen,
   Bot,
+  Calendar,
   ChevronRight,
-  FileText,
-  Flame,
+  ClipboardList,
   Folder,
+  Globe,
   GraduationCap,
   HelpCircle,
+  Home,
   Plus,
   RotateCcw,
   Send,
   Sparkles,
   Target,
+  User,
   X,
 } from 'lucide-react-native';
 
+type TabState = 'home' | 'learn' | 'progress' | 'profile';
 type ScreenState = 'onboarding' | 'main';
 type SubjectId = 'science' | 'math' | 'social' | 'nepali' | 'english' | 'opt_math';
 type QuizStatus = 'idle' | 'correct' | 'wrong';
@@ -67,24 +71,15 @@ interface GenerationRef {
   messageId: string;
 }
 
-interface ChapterItem {
-  number: number;
-  title: string;
-  titleNe: string;
-  page: number;
-  summary: string;
-}
-
-interface SubjectPDF {
+interface SubjectItem {
   id: SubjectId;
   name: string;
-  nameNe: string;
   unitsCount: number;
   pagesCount: number;
-  englishMediumTitle: string;
-  nepaliMediumTitle: string;
+  englishTitle: string;
+  nepaliTitle: string;
   description: string;
-  chapters: ChapterItem[];
+  overview: string;
 }
 
 const STORAGE_KEYS = {
@@ -201,60 +196,27 @@ const convertLatexToReadableMath = (text: string): string => {
   return converted;
 };
 
-// --- SUBJECT PDF VAULT CONFIGURATION ---
-const SUBJECTS_DATA: SubjectPDF[] = [
+// --- SUBJECTS DATA CONFIGURATION ---
+const SUBJECTS_DATA: SubjectItem[] = [
   {
     id: 'science',
-    name: 'Science & Technology',
-    nameNe: 'विज्ञान तथा प्रविधि',
+    name: 'Science & Tech',
     unitsCount: 15,
     pagesCount: 240,
-    englishMediumTitle: 'Class 10 Science & Tech (English Medium)',
-    nepaliMediumTitle: 'कक्षा १० विज्ञान तथा प्रविधि (नेपाली माध्यम)',
-    description: 'Complete official CDC textbook with all 15 units, diagrams, numericals, formulas, and practical guides.',
-    chapters: [
-      { number: 1, title: 'Scientific Learning', titleNe: 'वैज्ञानिक सिकाइ', page: 1, summary: 'Fundamental scientific methods, measurement units, precision, error analysis, and research process.' },
-      { number: 2, title: 'Classification of Living Beings', titleNe: 'जीवहरूको वर्गीकरण', page: 12, summary: 'Five kingdom classification, plant and animal diversity, vertebrates and invertebrates characteristics.' },
-      { number: 3, title: 'Honeybee', titleNe: 'माहुरी', page: 26, summary: 'Life cycle of honeybee, caste division (queen, worker, drone), pollination, and apiculture economic benefits.' },
-      { number: 4, title: 'Heredity & Genetics', titleNe: 'वंशानुक्रम', page: 38, summary: 'Mendel\'s laws of inheritance, monohybrid and dihybrid cross, chromosomes, DNA, RNA, and mutations.' },
-      { number: 5, title: 'Physiological Structure', titleNe: 'शारीरिक संरचना', page: 54, summary: 'Human nervous system, endocrine glands, hormone functions, reflex actions, and sensory organs.' },
-      { number: 6, title: 'Nature and Environment', titleNe: 'प्रकृति र वातावरण', page: 68, summary: 'Ecosystem trophic levels, biogeochemical cycles, greenhouse effect, climate change, and conservation.' },
-      { number: 7, title: 'Force and Gravity', titleNe: 'बल र गुरुत्वाकर्षण', page: 82, summary: 'Newton\'s universal law of gravitation F=G(m1*m2)/d², acceleration due to gravity g=GM/R², free fall, and weightlessness.' },
-      { number: 8, title: 'Pressure & Hydraulics', titleNe: 'चाप र हाइड्रोलिक्स', page: 98, summary: 'Pascal\'s law, hydraulic lift/brakes, Archimedes\' principle, laws of floatation, and atmospheric barometer.' },
-      { number: 9, title: 'Energy & Sources', titleNe: 'ऊर्जाका स्रोतहरू', page: 114, summary: 'Renewable and non-renewable energy sources, solar, hydroelectricity, nuclear energy, and energy crisis.' },
-      { number: 10, title: 'Wave & Sound', titleNe: 'तरङ्ग र ध्वनि', page: 128, summary: 'Transverse and longitudinal waves, speed of sound in media, reflection, echo, reverberation, and ultrasound.' },
-      { number: 11, title: 'Electricity & Magnetism', titleNe: 'विद्युत् र चुम्बकत्व', page: 142, summary: 'Ohm\'s law V=IR, electric power P=VI, household wiring, safety devices (fuse, MCB), Fleming\'s rules, transformer.' },
-      { number: 12, title: 'The Universe', titleNe: 'ब्रह्माण्ड', page: 160, summary: 'Big bang theory, life cycle of stars, solar system evolution, satellites, constellations, and space research.' },
-      { number: 13, title: 'Classification of Elements', titleNe: 'तत्वहरूको वर्गीकरण', page: 174, summary: 'Modern periodic table, electronic configuration, periodic trends (valency, atomic radius, electronegativity).' },
-      { number: 14, title: 'Chemical Reactions & Equations', titleNe: 'रासायनिक प्रतिक्रिया', page: 192, summary: 'Types of chemical reactions (combination, decomposition, displacement, neutralization), rate of reaction factors.' },
-      { number: 15, title: 'Gases, Metals & Hydrocarbons', titleNe: 'ग्याँस, धातु र हाइड्रोकार्बन', page: 210, summary: 'Laboratory preparation of CO2 and NH3, metallurgy of iron/copper, alkanes, alkenes, alkynes, and polymers.' },
-    ],
+    englishTitle: 'Class 10 Science & Technology (English Medium)',
+    nepaliTitle: 'कक्षा १० विज्ञान तथा प्रविधि (नेपाली माध्यम)',
+    description: 'Complete CDC textbook with physics, chemistry, biology, geology, and astronomy.',
+    overview: 'Unit 1: Scientific Learning • Unit 2: Classification of Living Beings • Unit 3: Honeybee • Unit 4: Heredity & Genetics • Unit 5: Physiological Structure • Unit 6: Nature & Environment • Unit 7: Force & Gravity [F=G(m1*m2)/d²] • Unit 8: Pressure [Pascal\'s Law, Archimedes Principle] • Unit 9: Energy • Unit 10: Wave & Sound • Unit 11: Electricity & Magnetism • Unit 12: Universe • Unit 13: Elements • Unit 14: Chemical Reactions • Unit 15: Gases & Metallurgy.',
   },
   {
     id: 'math',
-    name: 'Compulsory Mathematics',
-    nameNe: 'अनिवार्य गणित',
+    name: 'Compulsory Maths',
     unitsCount: 14,
     pagesCount: 212,
-    englishMediumTitle: 'Class 10 Compulsory Mathematics (English)',
-    nepaliMediumTitle: 'कक्षा १० अनिवार्य गणित (नेपाली माध्यम)',
-    description: 'Complete CDC Mathematics book covering Sets, Compound Interest, Mensuration, Algebra, and Geometry.',
-    chapters: [
-      { number: 1, title: 'Sets and Venn Diagrams', titleNe: 'समूह र भेनचित्र', page: 1, summary: 'Cardinality formula n(A∪B∪C), problems on 2 and 3 intersecting sets with Venn diagrams.' },
-      { number: 2, title: 'Compound Interest', titleNe: 'मिश्र ब्याज', page: 18, summary: 'Annual compounding CI=P[(1+R/100)^T - 1], semi-annual compounding, tax deductions, and depreciation.' },
-      { number: 3, title: 'Population Growth & Depreciation', titleNe: 'जनसङ्ख्या वृद्धि र ह्रास', page: 34, summary: 'Formulas Pt = P0(1±R/100)^T applied to compound population growth and asset depreciation.' },
-      { number: 4, title: 'Mensuration: Plane Figures', titleNe: 'समतलीय सतहको क्षेत्रफल', page: 48, summary: 'Area of scalene, isosceles, equilateral triangles, Heron\'s formula s=√(s(s-a)(s-b)(s-c)), and paths.' },
-      { number: 5, title: 'Mensuration: Cylinder & Sphere', titleNe: 'बेलना र गोला', page: 64, summary: 'Surface area and volume of cylinders (2πrh, πr²h), spheres (4πr², 4/3πr³), and combined solids.' },
-      { number: 6, title: 'Mensuration: Prism & Pyramid', titleNe: 'प्रिज्म र पिरामिड', page: 80, summary: 'Lateral and total surface area of triangular prisms, square-based pyramids, volume calculations.' },
-      { number: 7, title: 'Algebra: HCF and LCM', titleNe: 'म.स. र ल.स.', page: 96, summary: 'Factorization of algebraic expressions, a³±b³, a⁴+a²b²+b⁴ formulas, determining HCF and LCM.' },
-      { number: 8, title: 'Algebra: Quadratic Equations', titleNe: 'वर्ग समीकरण', page: 110, summary: 'Solving ax²+bx+c=0 by factorization and quadratic formula x=(-b±√(b²-4ac))/2a, word problems.' },
-      { number: 9, title: 'Algebra: Indices & Surds', titleNe: 'घाताङ्क र करणी', page: 124, summary: 'Laws of indices, exponential equations, rationalizing surds, solving radical equations.' },
-      { number: 10, title: 'Geometry: Triangles & Parallelograms', titleNe: 'त्रिभुज र समानान्तर चतुर्भुज', page: 138, summary: 'Theorems on areas of triangles and parallelograms standing on same base and between same parallels.' },
-      { number: 11, title: 'Geometry: Circle Theorems', titleNe: 'वृत्तका साध्यहरू', page: 154, summary: 'Angle at center is twice angle at circumference, inscribed angles in same segment are equal, cyclic quads.' },
-      { number: 12, title: 'Trigonometry: Height & Distance', titleNe: 'उचाइ र दुरी', page: 170, summary: 'Angles of elevation and depression, solving real-world height and distance problems with right triangles.' },
-      { number: 13, title: 'Statistics: Quartiles & Mean', titleNe: 'तथ्याङ्कशास्त्र', page: 184, summary: 'Mean of continuous data, Lower quartile Q1, Median Q2, Upper quartile Q3 calculations from frequency tables.' },
-      { number: 14, title: 'Probability', titleNe: 'सम्भाव्यता', page: 200, summary: 'Mutually exclusive events P(A∪B)=P(A)+P(B), independent events P(A∩B)=P(A)*P(B), and tree diagrams.' },
-    ],
+    englishTitle: 'Class 10 Compulsory Mathematics (English Medium)',
+    nepaliTitle: 'कक्षा १० अनिवार्य गणित (नेपाली माध्यम)',
+    description: 'Sets, Arithmetic, Mensuration, Algebra, Geometry, Trigonometry, and Statistics.',
+    overview: 'Chapter 1: Sets & Venn Diagrams • Chapter 2: Compound Interest [CI=P((1+R/100)^T - 1)] • Chapter 3: Population Growth & Depreciation • Chapter 4: Mensuration: Plane Figures (Heron\'s formula) • Chapter 5: Cylinder & Sphere • Chapter 6: Prism & Pyramid • Chapter 7: HCF & LCM • Chapter 8: Quadratic Equations [x=(-b±√(b²-4ac))/2a] • Chapter 9: Indices & Surds • Chapter 10: Triangles & Parallelograms • Chapter 11: Circles Theorems • Chapter 12: Height & Distance • Chapter 13: Quartiles & Mean • Chapter 14: Probability.',
   },
   {
     id: 'social',
@@ -262,118 +224,75 @@ const SUBJECTS_DATA: SubjectPDF[] = [
     nameNe: 'सामाजिक अध्ययन',
     unitsCount: 9,
     pagesCount: 270,
-    englishMediumTitle: 'Class 10 Social Studies (English Medium)',
-    nepaliMediumTitle: 'कक्षा १० सामाजिक अध्ययन (नेपाली माध्यम)',
-    description: 'Society, Constitution of Nepal 2072, Federalism, Geography, History, and Foreign Relations.',
-    chapters: [
-      { number: 1, title: 'We and Our Society', titleNe: 'हामी र हाम्रो समाज', page: 1, summary: 'Human resources development, social cohesion, and role of youth in nation-building.' },
-      { number: 2, title: 'Development & Federal Structure', titleNe: 'विकास र प्रादेशिक संरचना', page: 30, summary: 'Provinces of Nepal, infrastructure development, sustainable goals, and decentralization.' },
-      { number: 3, title: 'Traditions, Values and Norms', titleNe: 'हाम्रा सामाजिक मूल्य र मान्यता', page: 60, summary: 'Nepali arts, folk music, cultural heritage, world heritage sites, and national pride.' },
-      { number: 4, title: 'Social Problems and Solutions', titleNe: 'सामाजिक समस्या र समाधान', page: 90, summary: 'Corruption, human trafficking, untouchability, domestic violence, and legal remedies.' },
-      { number: 5, title: 'Civic Consciousness & Constitution', titleNe: 'नागरिक चेतना र मौलिक हक', page: 120, summary: 'Constitution of Nepal 2072, Fundamental Rights, duties of citizens, rule of law, and election system.' },
-      { number: 6, title: 'Our Earth & Climate', titleNe: 'हाम्रो पृथ्वी र जलवायु', page: 155, summary: 'Geography of Nepal, climate zones, world geography, natural disasters, and mitigation.' },
-      { number: 7, title: 'Our Past & History', titleNe: 'हाम्रो विगत र इतिहास', page: 190, summary: 'Unification of Nepal, democratic movements (2007, 2046, 2062/63 BS), peace process.' },
-      { number: 8, title: 'Economic Activities', titleNe: 'हाम्रो आर्थिक क्रियाकलाप', page: 220, summary: 'Agriculture, tourism, hydropower, international trade, remittance, and cooperative economy.' },
-      { number: 9, title: 'International Relations & UN', titleNe: 'अन्तर्राष्ट्रिय सम्बन्ध र शान्ति', page: 248, summary: 'United Nations Organization (UNO), SAARC, BIMSTEC, non-aligned foreign policy of Nepal.' },
-    ],
+    englishTitle: 'Class 10 Social Studies (English Medium)',
+    nepaliTitle: 'कक्षा १० सामाजिक अध्ययन (नेपाली माध्यम)',
+    description: 'Society, Constitution of Nepal 2072, Geography, History, and Foreign Relations.',
+    overview: 'Unit 1: We and Our Society • Unit 2: Development & Provincial Structure • Unit 3: Traditions, Values & Culture • Unit 4: Social Problems & Legal Solutions • Unit 5: Civic Consciousness, Constitution 2072 & Rights • Unit 6: Earth Geography & Climate • Unit 7: History of Nepal & Democratic Movements • Unit 8: Economic Activities & Remittance • Unit 9: International Relations & United Nations.',
   },
   {
     id: 'nepali',
-    name: 'Compulsory Nepali',
-    nameNe: 'अनिवार्य नेपाली',
+    name: 'Nepali',
     unitsCount: 10,
     pagesCount: 224,
-    englishMediumTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक (CDC Official)',
-    nepaliMediumTitle: 'कक्षा १० नेपाली व्याकरण, साहित्य र रचना',
+    englishTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक (CDC Official)',
+    nepaliTitle: 'कक्षा १० नेपाली व्याकरण, साहित्य र रचना',
     description: 'नेपाली पाठ, कविता, कथा, निबन्ध, व्याकरण (पदवर्ग, समास, पदसङ्गति) र रचना।',
-    chapters: [
-      { number: 1, title: 'उज्यालो यात्रा (कविता)', titleNe: 'उज्यालो यात्रा (कविता)', page: 1, summary: 'कवि रामप्रसाद ज्ञवालीद्वारा रचित मानवता, परिश्रम र सकारात्मक सोचको सन्देश दिने कविता।' },
-      { number: 2, title: 'घरझगडा (कथा)', titleNe: 'घरझगडा (कथा)', page: 24, summary: 'नेपाली ग्रामीण समाज, पारिवारिक सम्बन्ध, र आपसी मेलमिलापको महत्व झल्काउने कथा।' },
-      { number: 3, title: 'चिकित्सा विज्ञान र आयुर्वेद (प्रबन्ध)', titleNe: 'चिकित्सा विज्ञान र आयुर्वेद', page: 48, summary: 'प्राकृतिक जडीबुटी, प्राचीन आयुर्वेदिक उपचार पद्धति र आधुनिक चिकित्साको तुलनात्मक प्रबन्ध।' },
-      { number: 4, title: 'यस्तो कहिल्यै नहोस् (नाटक)', titleNe: 'यस्तो कहिल्यै नहोस् (नाटक)', page: 72, summary: 'लागुऔषध दुर्व्यसन, युवा पुस्ताको समस्या र सामाजिक सचेतना जगाउने सन्देशमूलक नाटक।' },
-      { number: 5, title: 'लक्ष्मीप्रसाद देवकोटा (जीवनी)', titleNe: 'महाकवि लक्ष्मीप्रसाद देवकोटा', page: 96, summary: 'महाकवि देवकोटाको जीवन सङ्घर्ष, साहित्यिक योगदान र अमर कृतिहरूको संक्षिप्त परिचय।' },
-      { number: 6, title: 'अधिकार ठूलो कि कर्तव्य (वादविवाद)', titleNe: 'अधिकार ठूलो कि कर्तव्य', page: 118, summary: 'नागरिक अधिकार र कर्तव्यको सन्तुलन, तर्कशीलता र वाककला सम्बन्धी वादविवाद पाठ।' },
-      { number: 7, title: 'शत्रु (कथा)', titleNe: 'शत्रु (कथा)', page: 140, summary: 'विश्वेश्वरप्रसाद कोइरालाद्वारा रचित मानव मनको मनोवैज्ञानिक विश्लेषण गरिएको उत्कृष्ट कथा।' },
-      { number: 8, title: 'हाम्रो श्रम र सीप (निबन्ध)', titleNe: 'हाम्रो श्रम र सीप', page: 162, summary: 'श्रमको सम्मान, स्वदेशी उत्पादनको प्रवर्द्धन र प्राविधिक सीपको महत्वबारे विचारप्रधान निबन्ध।' },
-      { number: 9, title: 'मेरो देशको माटो (कविता)', titleNe: 'मेरो देशको माटो (कविता)', page: 184, summary: 'राष्ट्रप्रेम, भौगोलिक सौन्दर्य र नेपाली माटोप्रतिको अगाध निष्ठा व्यक्त गरिएको कविता।' },
-      { number: 10, title: 'नेपाली व्याकरण तथा रचना', titleNe: 'नेपाली व्याकरण तथा रचना', page: 202, summary: 'पदवर्ग (नाम, सर्वनाम, विशेषण, क्रिया), पदसङ्गति, काल र पक्ष, वाच्य, समास, प्रतिवेदन र निबन्ध।' },
-    ],
+    overview: 'पाठ १: उज्यालो यात्रा (कविता) • पाठ २: घरझगडा (कथा) • पाठ ३: चिकित्सा विज्ञान र आयुर्वेद (प्रबन्ध) • पाठ ४: यस्तो कहिल्यै नहोस् (नाटक) • पाठ ५: महाकवि लक्ष्मीप्रसाद देवकोटा (जीवनी) • पाठ ६: अधिकार ठूलो कि कर्तव्य (वादविवाद) • पाठ ७: शत्रु (कथा) • पाठ ८: हाम्रो श्रम र सीप (निबन्ध) • पाठ ९: मेरो देशको माटो (कविता) • पाठ १०: नेपाली व्याकरण, पदवर्ग, समास, प्रतिवेदन र निबन्ध।',
   },
   {
     id: 'english',
     name: 'Compulsory English',
-    nameNe: 'अंग्रेजी',
     unitsCount: 10,
     pagesCount: 198,
-    englishMediumTitle: 'Class 10 Compulsory English (CDC Official)',
-    nepaliMediumTitle: 'Class 10 English Guide & Model Papers',
-    description: 'Reading comprehension, writing tasks (essays, brochures, letters), grammar structures, and vocabulary.',
-    chapters: [
-      { number: 1, title: 'Travel and Tourism', titleNe: 'Travel and Tourism', page: 1, summary: 'Guide to trekking in Nepal, brochures, tourist itineraries, and travelogue writing.' },
-      { number: 2, title: 'Health and Hygiene', titleNe: 'Health and Hygiene', page: 20, summary: 'Mental health, physical fitness, conditional sentences (Type 1, 2, 3), and doctor-patient dialogue.' },
-      { number: 3, title: 'Family and Relationships', titleNe: 'Family and Relationships', page: 40, summary: 'Poem "A Mother\'s Love", describing personal memories, reported speech transformations.' },
-      { number: 4, title: 'Nature and Ecology', titleNe: 'Nature and Ecology', page: 60, summary: 'Climate change, wildlife preservation, passive voice in scientific descriptions.' },
-      { number: 5, title: 'Science and Technology', titleNe: 'Science and Technology', page: 80, summary: 'Artificial Intelligence, robotics, technological revolution, and formal essay writing.' },
-      { number: 6, title: 'Success and Achievement', titleNe: 'Success and Achievement', page: 100, summary: 'Biography of Nelson Mandela, overcoming adversity, connectors of contrast and reason.' },
-      { number: 7, title: 'Power and Politics', titleNe: 'Power and Politics', page: 120, summary: 'Democratic values, speech by Abraham Lincoln, persuasive writing techniques.' },
-      { number: 8, title: 'Arts and Creation', titleNe: 'Arts and Creation', page: 140, summary: 'Traditional Nepali Newari architecture, painting styles, relative clauses.' },
-      { number: 9, title: 'Media and Entertainment', titleNe: 'Media and Entertainment', page: 160, summary: 'Digital news journalism, film review formats, book review structure.' },
-      { number: 10, title: 'Grammar and SEE Model Sets', titleNe: 'Grammar and SEE Model Sets', page: 180, summary: 'Question tags, preposition rules, subject-verb agreement, and official SEE model question practice.' },
-    ],
+    englishTitle: 'Class 10 Compulsory English (CDC Official)',
+    nepaliTitle: 'Class 10 English Guide & Model Papers',
+    description: 'Reading comprehension, writing tasks (essays, brochures, letters), and grammar structures.',
+    overview: 'Unit 1: Travel & Tourism (Guide to Nepal) • Unit 2: Health & Hygiene (Mental & Physical Fitness) • Unit 3: Family & Relationships (A Mother\'s Love) • Unit 4: Nature & Ecology (Climate Action) • Unit 5: Science & Technology (Artificial Intelligence) • Unit 6: Success & Achievement (Nelson Mandela) • Unit 7: Power & Politics (Democracy) • Unit 8: Arts & Architecture • Unit 9: Media & Entertainment • Unit 10: SEE Model Questions & Grammar.',
   },
   {
     id: 'opt_math',
     name: 'Optional Mathematics',
-    nameNe: 'ऐच्छिक गणित',
     unitsCount: 9,
     pagesCount: 256,
-    englishMediumTitle: 'Class 10 Optional Mathematics (English)',
-    nepaliMediumTitle: 'कक्षा १० ऐच्छिक गणित (नेपाली माध्यम)',
+    englishTitle: 'Class 10 Optional Mathematics (English Medium)',
+    nepaliTitle: 'कक्षा १० ऐच्छिक गणित (नेपाली माध्यम)',
     description: 'Functions, Matrices, Coordinate Geometry, Trigonometry, Vectors, and Transformations.',
-    chapters: [
-      { number: 1, title: 'Functions & Polynomials', titleNe: 'कार्य र बहुपद', page: 1, summary: 'Composite functions (fog)(x), inverse functions f⁻¹(x), remainder theorem, and polynomial roots.' },
-      { number: 2, title: 'Matrices & Determinants', titleNe: 'म्याट्रिक्स र निर्धारक', page: 30, summary: 'Matrix determinant 2x2, adjoint matrix, inverse of matrix A⁻¹, and solving linear systems by Cramer\'s rule.' },
-      { number: 3, title: 'Coordinate Geometry: Lines', titleNe: 'सरल रेखाको जोडी', page: 60, summary: 'Angle between two lines tanθ=±(m1-m2)/(1+m1m2), homogeneous equation ax²+2hxy+by²=0, lines pair proofs.' },
-      { number: 4, title: 'Coordinate Geometry: Circle', titleNe: 'वृत्तको समीकरण', page: 90, summary: 'Equation of circle (x-h)²+(y-k)²=r², general form x²+y²+2gx+2fy+c=0, center (-g, -f), radius √(g²+f²-c).' },
-      { number: 5, title: 'Trigonometry: Multiple Angles', titleNe: 'संयुक्त र अपवर्त्य कोणहरू', page: 120, summary: 'Compound angles sin(A±B), multiple angles sin2A, cos2A, tan2A, sub-multiple angles, and conditional identities.' },
-      { number: 6, title: 'Trigonometry: Transformation', titleNe: 'रूपान्तरण सूत्रहरू', page: 155, summary: 'Transforming product to sum/difference 2sinAcosB, and transforming sum to product sinC+sinD.' },
-      { number: 7, title: 'Vectors & Scalar Products', titleNe: 'भेक्टर र स्केलर गुणन', page: 190, summary: 'Dot product a·b=|a||b|cosθ, perpendicularity condition a·b=0, vector geometry proofs (Apollonius theorem).' },
-      { number: 8, title: 'Matrix Transformations', titleNe: 'म्याट्रिक्स रूपान्तरण', page: 220, summary: '2x2 transformation matrices for reflection in axes, rotation about origin (90°, 180°, 270°), enlargement.' },
-      { number: 9, title: 'Statistics: Standard Deviation', titleNe: 'स्तरीक विचलन र विचरणशीलता', page: 240, summary: 'Calculation of mean, standard deviation σ=√(Σfd²/N - (Σfd/N)²), and coefficient of variation (CV).' },
-    ],
+    overview: 'Unit 1: Functions & Polynomials (Composite & Inverse) • Unit 2: Matrices & Determinants (Inverse & Cramer\'s Rule) • Unit 3: Pair of Straight Lines [ax²+2hxy+by²=0] • Unit 4: Circle Equations [(x-h)²+(y-k)²=r²] • Unit 5: Trigonometry: Multiple & Sub-multiple Angles • Unit 6: Transformation Formulas • Unit 7: Vectors & Dot Product [a·b=|a||b|cosθ] • Unit 8: Matrix Transformations (Reflection, Rotation) • Unit 9: Statistics & Standard Deviation.',
   },
 ];
 
 const QUIZ_QUESTIONS = [
   {
-    question: 'What can form when an acid reacts with a base in a neutralization reaction?',
-    options: ['Salt and water', 'Only hydrogen gas', 'Only metal oxide', 'Ice crystals'],
+    question: 'What can form when an acid reacts with a base?',
+    options: ['Salt and water', 'Only gas', 'Only metal', 'Ice'],
     correctIndex: 0,
-    explanation: 'An acid reacts with a base to form salt and water (e.g., HCl + NaOH -> NaCl + H2O).',
+    explanation: 'An acid reacts with a base in a neutralization reaction to form salt and water (e.g., HCl + NaOH -> NaCl + H2O).',
   },
   {
     question: 'What is the value of Universal Gravitational Constant (G)?',
-    options: ['6.67 × 10⁻¹¹ N m²/kg²', '9.8 m/s²', '3.0 × 10⁸ m/s', '1.6 × 10⁻¹⁹ C'],
+    options: ['6.67 × 10⁻¹¹ N m²/kg²', '9.8 m/s²', '3 × 10⁸ m/s', '1.6 × 10⁻¹⁹ C'],
     correctIndex: 0,
-    explanation: 'G is 6.67 × 10⁻¹¹ N m²/kg², which remains constant everywhere across the universe.',
+    explanation: 'G = 6.67 × 10⁻¹¹ N m²/kg², which remains constant everywhere across the universe.',
   },
   {
     question: 'According to Pascal\'s Law, pressure exerted on an enclosed liquid is transmitted:',
-    options: ['Equally in all directions', 'Only in the downward direction', 'Only to the vessel walls', 'Zero at the bottom'],
+    options: ['Equally in all directions', 'Only downwards', 'Only to the walls', 'Zero at the bottom'],
     correctIndex: 0,
-    explanation: 'Pascal\'s Law states that pressure applied to an enclosed liquid is transmitted equally and undiminished in all directions.',
+    explanation: 'Pascal\'s Law states that pressure applied to an enclosed liquid is transmitted equally and undiminished in every direction.',
   },
   {
     question: 'What is the specific heat capacity of pure water?',
     options: ['4200 J/kg°C', '1000 J/kg°C', '2100 J/kg°C', '380 J/kg°C'],
     correctIndex: 0,
-    explanation: 'Water has a high specific heat capacity of 4200 J/kg°C, making it an excellent natural coolant.',
+    explanation: 'Water has a high specific heat capacity of 4200 J/kg°C, helping it regulate temperature.',
   },
 ];
 
 export default function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [screen, setScreen] = useState<ScreenState>('onboarding');
+  const [activeTab, setActiveTab] = useState<TabState>('home');
+  const [language, setLanguage] = useState<'EN' | 'NE'>('NE');
   const [user, setUser] = useState<UserProfile | null>(null);
   const [name, setName] = useState('');
   const [grade, setGrade] = useState('10');
@@ -387,15 +306,9 @@ export default function App() {
 
   // Modals & Navigation
   const [isChatModalOpen, setIsChatModalOpen] = useState(false);
-  const [selectedSubject, setSelectedSubject] = useState<SubjectPDF | null>(null);
   const [activePdfViewing, setActivePdfViewing] = useState<{
-    subject: string;
-    medium: string;
-    title: string;
-    chapterNumber?: number;
-    chapterTitle?: string;
-    page?: number;
-    summary?: string;
+    subject: SubjectItem;
+    medium: 'EN' | 'NE';
   } | null>(null);
 
   // Quick Quiz State
@@ -422,10 +335,6 @@ export default function App() {
         setActivePdfViewing(null);
         return true;
       }
-      if (selectedSubject) {
-        setSelectedSubject(null);
-        return true;
-      }
       if (isChatModalOpen) {
         setIsChatModalOpen(false);
         return true;
@@ -435,7 +344,7 @@ export default function App() {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandler.remove();
-  }, [activePdfViewing, selectedSubject, isChatModalOpen]);
+  }, [activePdfViewing, isChatModalOpen]);
 
   // --- BOOT & MODEL INITIALIZATION ---
   useEffect(() => {
@@ -485,7 +394,7 @@ export default function App() {
       } catch (err) {
         console.warn('Boot issue:', err);
       } finally {
-        setTimeout(() => setIsBooting(false), 300);
+        setTimeout(() => setIsBooting(false), 250);
       }
     };
 
@@ -536,20 +445,10 @@ export default function App() {
     setScreen('main');
   };
 
-  const openPdfDirect = (
-    subject: SubjectPDF,
-    medium: 'English Medium' | 'Nepali Medium',
-    chapter?: ChapterItem
-  ) => {
-    const title = medium === 'English Medium' ? subject.englishMediumTitle : subject.nepaliMediumTitle;
+  const openPdfForSubject = (subject: SubjectItem, medium: 'EN' | 'NE' = 'EN') => {
     setActivePdfViewing({
-      subject: subject.name,
+      subject,
       medium,
-      title,
-      chapterNumber: chapter?.number ?? 1,
-      chapterTitle: chapter ? (medium === 'English Medium' ? chapter.title : chapter.titleNe) : subject.chapters[0]?.title,
-      page: chapter?.page ?? 1,
-      summary: chapter?.summary ?? subject.description,
     });
   };
 
@@ -635,18 +534,18 @@ export default function App() {
       const q = userQuery.toLowerCase();
 
       if (q.includes('gravity') || q.includes('force') || q.includes('weight')) {
-        rawResponse += `Unit 7: Force & Gravity\n\n1. Universal Law of Gravitation:\n$$F = \\frac{G \\cdot m_1 \\cdot m_2}{d^2}$$\nwhere G = 6.67 × 10⁻¹¹ N m²/kg².\n\n2. Acceleration due to Gravity:\n$$g = \\frac{G \\cdot M}{R^2} \\approx 9.8 \\text{ m/s}^2$$\n\nKey Note: Free fall occurs when acceleration equals g, causing apparent weightlessness.`;
+        rawResponse += `Unit 7: Force & Gravity\n\n1. Universal Law of Gravitation:\n$$F = \\frac{G \\cdot m_1 \\cdot m_2}{d^2}$$\nwhere G = 6.67 × 10⁻¹¹ N m²/kg².\n\n2. Acceleration due to Gravity:\n$$g = \\frac{G \\cdot M}{R^2} \\approx 9.8 \\text{ m/s}^2$$\n\nKey Note: Free fall occurs when acceleration equals g, causing weightlessness.`;
       } else if (q.includes('pressure') || q.includes('pascal') || q.includes('hydraulic')) {
-        rawResponse += `Unit 8: Pressure & Hydraulics\n\n1. Pascal's Law Principle:\n$$\\frac{F_1}{A_1} = \\frac{F_2}{A_2}$$\n\n2. Archimedes' Upthrust:\n$$\\text{Upthrust } (U) = V \\cdot d \\cdot g$$\nA floating body displaces liquid equal to its own total weight.`;
+        rawResponse += `Unit 8: Pressure & Hydraulics\n\n1. Pascal's Law Principle:\n$$\\frac{F_1}{A_1} = \\frac{F_2}{A_2}$$\n\n2. Archimedes' Upthrust:\n$$\\text{Upthrust } (U) = V \\cdot d \\cdot g$$\nA floating body displaces liquid equal to its own weight.`;
       } else if (q.includes('interest') || q.includes('math') || q.includes('compound')) {
         rawResponse += `Compulsory Mathematics: Compound Interest\n\n1. Yearly Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{100}\\right)^T - 1 \\right]$$\n\n2. Semi-Annual Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{200}\\right)^{2T} - 1 \\right]$$`;
       } else {
-        rawResponse += `Class 10 Core Summary:\n• Thoroughly master formulas, scientific definitions, and theorem proofs.\n• Use step-by-step calculation with exact standard units.\n• Review official CDC textbook questions for the best SEE exam scores.`;
+        rawResponse += `Class 10 Core Summary:\n• Thoroughly master formulas, scientific definitions, and theorem proofs.\n• Use step-by-step calculations with exact standard units.\n• Consult official CDC textbook questions for the best SEE exam scores.`;
       }
 
       updateAssistantMessage(sessionId, messageId, rawResponse, false);
       setIsGenerating(false);
-    }, 450);
+    }, 400);
   };
 
   const handleQuizAnswer = (index: number) => {
@@ -660,7 +559,7 @@ export default function App() {
     setQuizStatus('idle');
   };
 
-  // --- BOOT SCREEN (CLEAN & MINIMALIST) ---
+  // --- BOOT SCREEN (CLEAN MINIMALIST) ---
   if (isBooting) {
     return (
       <SafeAreaView style={styles.bootContainer}>
@@ -724,36 +623,41 @@ export default function App() {
     );
   }
 
-  // --- MAIN DASHBOARD (DARK MODE DEFAULT) ---
+  // --- MAIN DASHBOARD (EXACT MATCH TO SCREENSHOT 1) ---
   return (
     <SafeAreaView style={styles.darkContainer}>
       <StatusBar barStyle="light-content" backgroundColor="#000000" />
 
-      {/* TOP HEADER (CLEAN NO TRANSLATOR BUTTON) */}
+      {/* TOP HEADER (MATCHING SCREENSHOT 1) */}
       <View style={styles.topHeader}>
-        <View style={styles.headerTitleRow}>
+        <View style={styles.headerLeftGroup}>
           <Text style={styles.appHeaderTitle}>Guru</Text>
           <View style={styles.classBadge}>
             <Text style={styles.classBadgeText}>{`Class ${user?.grade ?? '10'}`}</Text>
           </View>
         </View>
-        <TouchableOpacity style={styles.headerIconButton} onPress={() => setIsChatModalOpen(true)}>
-          <Bot size={20} color="#ffffff" />
+
+        <TouchableOpacity
+          style={styles.langPillButton}
+          onPress={() => setLanguage(language === 'EN' ? 'NE' : 'EN')}
+        >
+          <Globe size={16} color="#ffffff" style={{ marginRight: 6 }} />
+          <Text style={styles.langPillText}>{language}</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
         {/* GREETING */}
         <View style={styles.greetingBlock}>
-          <Text style={styles.greetingTitle}>{`Hi, ${user?.name || 'Student'}`}</Text>
-          <Text style={styles.greetingSub}>Choose a subject folder to read official CDC textbooks offline.</Text>
+          <Text style={styles.greetingTitle}>{`Hi, ${user?.name || 'Sangam'}`}</Text>
+          <Text style={styles.greetingSub}>Choose a subject folder or read official CDC textbooks offline.</Text>
         </View>
 
-        {/* OFFICIAL CDC TEXTBOOKS BANNER */}
+        {/* OFFICIAL CDC TEXTBOOKS BANNER (OPENS PDF DIRECTLY) */}
         <TouchableOpacity
           style={styles.textbookBanner}
           activeOpacity={0.85}
-          onPress={() => setSelectedSubject(SUBJECTS_DATA[0])}
+          onPress={() => openPdfForSubject(SUBJECTS_DATA[0])}
         >
           <View style={styles.textbookBannerLeft}>
             <View style={styles.textbookIconBox}>
@@ -761,7 +665,7 @@ export default function App() {
             </View>
             <View style={styles.textbookTextGroup}>
               <Text style={styles.textbookBannerTitle}>Official CDC Textbooks</Text>
-              <Text style={styles.textbookBannerSub}>English & Nepali Medium • PDF Vault</Text>
+              <Text style={styles.textbookBannerSub}>English & Nepali{'\n'}Medium • PDF Vault</Text>
             </View>
           </View>
           <View style={styles.seeAllRow}>
@@ -770,20 +674,20 @@ export default function App() {
           </View>
         </TouchableOpacity>
 
-        {/* SUBJECT RESOURCE FOLDERS TITLE */}
+        {/* SUBJECT RESOURCE FOLDERS HEADER */}
         <View style={styles.sectionHeaderRow}>
-          <Folder size={18} color="#ffffff" />
+          <Folder size={18} color="#ffffff" style={{ marginRight: 8 }} />
           <Text style={styles.sectionTitleText}>Subject Resource Folders</Text>
         </View>
 
-        {/* 6 SUBJECT FOLDER GRID CARDS */}
+        {/* 2x3 SUBJECT FOLDERS GRID (DIRECTLY OPENS PDF ON CLICK) */}
         <View style={styles.subjectGrid}>
           {SUBJECTS_DATA.map((subj) => (
             <TouchableOpacity
               key={subj.id}
               style={styles.subjectFolderCard}
               activeOpacity={0.8}
-              onPress={() => setSelectedSubject(subj)}
+              onPress={() => openPdfForSubject(subj)}
             >
               <View style={styles.subjectCardTop}>
                 <Folder size={20} color="#ffffff" />
@@ -801,7 +705,7 @@ export default function App() {
         <View style={styles.dualStatsRow}>
           <View style={styles.statCard}>
             <View style={styles.statHeader}>
-              <Flame size={18} color="#ffffff" />
+              <Calendar size={18} color="#ffffff" />
               <Text style={styles.statLabel}>DAILY STREAK</Text>
             </View>
             <Text style={styles.statValue}>2</Text>
@@ -829,28 +733,53 @@ export default function App() {
           <Text style={styles.quizQuestionText}>{currentQuiz.question}</Text>
 
           <View style={styles.quizOptionsGrid}>
-            {currentQuiz.options.map((opt, idx) => {
-              const isSelected = selectedOption === idx;
-              const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
-              const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
-
-              return (
-                <TouchableOpacity
-                  key={`${opt}-${idx}`}
-                  style={[
-                    styles.quizOptionPill,
-                    isSelected && styles.quizOptionPillSelected,
-                    isCorrect && styles.quizOptionPillCorrect,
-                    isWrong && styles.quizOptionPillWrong,
-                  ]}
-                  onPress={() => handleQuizAnswer(idx)}
-                >
-                  <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]}>
-                    {opt}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+            <View style={styles.quizRowTwo}>
+              {currentQuiz.options.slice(0, 2).map((opt, idx) => {
+                const isSelected = selectedOption === idx;
+                const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
+                const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
+                return (
+                  <TouchableOpacity
+                    key={`${opt}-${idx}`}
+                    style={[
+                      styles.quizOptionPill,
+                      isSelected && styles.quizOptionPillSelected,
+                      isCorrect && styles.quizOptionPillCorrect,
+                      isWrong && styles.quizOptionPillWrong,
+                    ]}
+                    onPress={() => handleQuizAnswer(idx)}
+                  >
+                    <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
+                      {opt}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={styles.quizRowTwo}>
+              {currentQuiz.options.slice(2, 4).map((opt, idx) => {
+                const realIdx = idx + 2;
+                const isSelected = selectedOption === realIdx;
+                const isCorrect = quizStatus !== 'idle' && realIdx === currentQuiz.correctIndex;
+                const isWrong = quizStatus === 'wrong' && isSelected && realIdx !== currentQuiz.correctIndex;
+                return (
+                  <TouchableOpacity
+                    key={`${opt}-${realIdx}`}
+                    style={[
+                      styles.quizOptionPill,
+                      isSelected && styles.quizOptionPillSelected,
+                      isCorrect && styles.quizOptionPillCorrect,
+                      isWrong && styles.quizOptionPillWrong,
+                    ]}
+                    onPress={() => handleQuizAnswer(realIdx)}
+                  >
+                    <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
+                      {opt}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
 
           {quizStatus !== 'idle' && (
@@ -861,13 +790,17 @@ export default function App() {
           )}
 
           <TouchableOpacity style={styles.newQuizButton} onPress={nextQuiz}>
-            <RotateCcw size={14} color="#ffffff" />
+            <RotateCcw size={14} color="#ffffff" style={{ marginRight: 6 }} />
             <Text style={styles.newQuizButtonText}>New quiz</Text>
           </TouchableOpacity>
         </View>
 
         {/* CLASS-AWARE TUTORING CARD */}
-        <View style={styles.classAwareCard}>
+        <TouchableOpacity
+          style={styles.classAwareCard}
+          activeOpacity={0.85}
+          onPress={() => setIsChatModalOpen(true)}
+        >
           <GraduationCap size={22} color="#ffffff" />
           <View style={styles.classAwareTextGroup}>
             <Text style={styles.classAwareTitle}>Class-aware tutoring</Text>
@@ -875,114 +808,43 @@ export default function App() {
               Guru changes tone and depth for each class level, from gentle basics to serious exam prep.
             </Text>
           </View>
-        </View>
+          <ChevronRight size={18} color="#71717a" />
+        </TouchableOpacity>
       </ScrollView>
 
-      {/* FLOATING GURU AI ASSISTANT BUTTON (MOVABLE & ACCESSIBLE EVERYWHERE) */}
+      {/* FLOATING GURU AI BOT BUTTON (EXACT MATCH TO SCREENSHOT 1) */}
       <TouchableOpacity
         style={styles.floatingBotButton}
         activeOpacity={0.9}
         onPress={() => setIsChatModalOpen(true)}
       >
-        <Bot size={26} color="#000000" />
+        <Bot size={26} color="#ffffff" />
       </TouchableOpacity>
 
-      {/* --- SUBJECT DETAIL MODAL (OPENS ALL CHAPTERS & PDF) --- */}
-      {selectedSubject && (
-        <View style={styles.fullModalOverlay}>
-          <SafeAreaView style={styles.darkContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity style={styles.modalBackButton} onPress={() => setSelectedSubject(null)}>
-                <ArrowLeft size={22} color="#ffffff" />
-              </TouchableOpacity>
-              <View style={styles.modalHeaderTitleGroup}>
-                <Text style={styles.modalHeaderTitle}>{selectedSubject.name}</Text>
-                <Text style={styles.modalHeaderSub}>{`Class ${user?.grade ?? '10'} • Official CDC Curriculum`}</Text>
-              </View>
-            </View>
+      {/* BOTTOM TAB NAVIGATION BAR (MATCHING SCREENSHOT 1) */}
+      <View style={styles.bottomTabBar}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('home')}>
+          <Home size={22} color={activeTab === 'home' ? '#ffffff' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'home' && styles.tabLabelActive]}>Home</Text>
+        </TouchableOpacity>
 
-            <ScrollView contentContainerStyle={styles.pdfSelectionScroll} showsVerticalScrollIndicator={false}>
-              {/* SUBJECT HERO CARD */}
-              <View style={styles.pdfSubjectHero}>
-                <BookOpen size={36} color="#ffffff" />
-                <Text style={styles.pdfSubjectHeroTitle}>{selectedSubject.name}</Text>
-                <Text style={styles.pdfSubjectHeroDesc}>{selectedSubject.description}</Text>
-                <View style={styles.metaBadgeRow}>
-                  <View style={styles.metaBadge}>
-                    <Text style={styles.metaBadgeText}>{`${selectedSubject.unitsCount} Units`}</Text>
-                  </View>
-                  <View style={styles.metaBadge}>
-                    <Text style={styles.metaBadgeText}>{`${selectedSubject.pagesCount} Pages`}</Text>
-                  </View>
-                  <View style={styles.metaBadge}>
-                    <Text style={styles.metaBadgeText}>SEE Syllabus</Text>
-                  </View>
-                </View>
-              </View>
+        <TouchableOpacity style={styles.tabItem} onPress={() => openPdfForSubject(SUBJECTS_DATA[0])}>
+          <BookOpen size={22} color={activeTab === 'learn' ? '#ffffff' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'learn' && styles.tabLabelActive]}>Learn</Text>
+        </TouchableOpacity>
 
-              {/* QUICK MEDIUM LAUNCH BUTTONS */}
-              <Text style={styles.selectMediumHeading}>Open Official Textbook PDF:</Text>
-              <View style={styles.mediumActionRow}>
-                <TouchableOpacity
-                  style={styles.mediumButton}
-                  activeOpacity={0.85}
-                  onPress={() => openPdfDirect(selectedSubject, 'English Medium')}
-                >
-                  <FileText size={18} color="#ffffff" />
-                  <Text style={styles.mediumButtonText}>English Medium PDF</Text>
-                </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('progress')}>
+          <ClipboardList size={22} color={activeTab === 'progress' ? '#ffffff' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'progress' && styles.tabLabelActive]}>Progress</Text>
+        </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.mediumButton}
-                  activeOpacity={0.85}
-                  onPress={() => openPdfDirect(selectedSubject, 'Nepali Medium')}
-                >
-                  <FileText size={18} color="#ffffff" />
-                  <Text style={styles.mediumButtonText}>नेपाली माध्यम PDF</Text>
-                </TouchableOpacity>
-              </View>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('profile')}>
+          <User size={22} color={activeTab === 'profile' ? '#ffffff' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'profile' && styles.tabLabelActive]}>Profile</Text>
+        </TouchableOpacity>
+      </View>
 
-              {/* CHAPTERS LIST (TAP ANY CHAPTER TO OPEN PDF READER DIRECTLY) */}
-              <Text style={styles.selectMediumHeading}>Chapters & Units in this Book:</Text>
-              <View style={styles.chapterListContainer}>
-                {selectedSubject.chapters.map((ch) => (
-                  <TouchableOpacity
-                    key={ch.number}
-                    style={styles.chapterCardItem}
-                    activeOpacity={0.8}
-                    onPress={() => openPdfDirect(selectedSubject, 'English Medium', ch)}
-                  >
-                    <View style={styles.chapterNumberBox}>
-                      <Text style={styles.chapterNumberText}>{ch.number}</Text>
-                    </View>
-                    <View style={styles.chapterTextBox}>
-                      <Text style={styles.chapterTitleMain}>{ch.title}</Text>
-                      <Text style={styles.chapterTitleNe}>{ch.titleNe}</Text>
-                      <Text style={styles.chapterPageInfo}>{`Page ${ch.page} • Tap to read PDF`}</Text>
-                    </View>
-                    <ChevronRight size={18} color="#ffffff" />
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* ASK AI ABOUT SUBJECT */}
-              <TouchableOpacity
-                style={styles.askAiForSubjectBtn}
-                onPress={() => {
-                  setSelectedSubject(null);
-                  setPrompt(`Explain the complete Class 10 SEE syllabus and important questions for ${selectedSubject.name}.`);
-                  setIsChatModalOpen(true);
-                }}
-              >
-                <Bot size={20} color="#000000" />
-                <Text style={styles.askAiForSubjectBtnText}>{`Ask Guru AI about ${selectedSubject.name}`}</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </SafeAreaView>
-        </View>
-      )}
-
-      {/* --- FULL-PAGE PDF VIEWER / READER POPUP --- */}
+      {/* --- DIRECT FULL-PAGE PDF VIEWER POPUP --- */}
       {activePdfViewing && (
         <View style={styles.fullModalOverlay}>
           <SafeAreaView style={styles.darkContainer}>
@@ -991,13 +853,15 @@ export default function App() {
                 <ArrowLeft size={22} color="#ffffff" />
               </TouchableOpacity>
               <View style={styles.modalHeaderTitleGroup}>
-                <Text style={styles.modalHeaderTitle} numberOfLines={1}>{activePdfViewing.title}</Text>
-                <Text style={styles.modalHeaderSub}>{`${activePdfViewing.subject} • ${activePdfViewing.medium} • Page ${activePdfViewing.page || 1}`}</Text>
+                <Text style={styles.modalHeaderTitle} numberOfLines={1}>
+                  {activePdfViewing.medium === 'EN' ? activePdfViewing.subject.englishTitle : activePdfViewing.subject.nepaliTitle}
+                </Text>
+                <Text style={styles.modalHeaderSub}>{`Official CDC Textbook • ${activePdfViewing.subject.pagesCount} Pages`}</Text>
               </View>
               <TouchableOpacity
                 style={styles.pdfHeaderAiBtn}
                 onPress={() => {
-                  setPrompt(`I am reading ${activePdfViewing.title}, ${activePdfViewing.chapterTitle || ''}. Explain the key concepts and SEE questions.`);
+                  setPrompt(`I am reading ${activePdfViewing.subject.name}. Explain the key formulas, definitions, and SEE questions.`);
                   setIsChatModalOpen(true);
                 }}
               >
@@ -1006,37 +870,55 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
+            {/* Medium Switcher Pill in PDF */}
+            <View style={styles.pdfMediumSwitchBar}>
+              <TouchableOpacity
+                style={[styles.pdfMediumPill, activePdfViewing.medium === 'EN' && styles.pdfMediumPillActive]}
+                onPress={() => setActivePdfViewing({ ...activePdfViewing, medium: 'EN' })}
+              >
+                <Text style={[styles.pdfMediumPillText, activePdfViewing.medium === 'EN' && styles.pdfMediumPillTextActive]}>
+                  English Medium
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.pdfMediumPill, activePdfViewing.medium === 'NE' && styles.pdfMediumPillActive]}
+                onPress={() => setActivePdfViewing({ ...activePdfViewing, medium: 'NE' })}
+              >
+                <Text style={[styles.pdfMediumPillText, activePdfViewing.medium === 'NE' && styles.pdfMediumPillTextActive]}>
+                  नेपाली माध्यम
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <ScrollView contentContainerStyle={styles.pdfViewportScroll} showsVerticalScrollIndicator={false}>
               {/* PDF NOTICE BANNER */}
               <View style={styles.pdfNoticeBanner}>
-                <BookOpen size={20} color="#ffffff" />
+                <BookOpen size={20} color="#ffffff" style={{ marginRight: 10 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.pdfNoticeTitle}>Official CDC Textbook Loaded</Text>
                   <Text style={styles.pdfNoticeSub}>100% Offline Access • Curriculum Development Centre, Nepal</Text>
                 </View>
               </View>
 
-              {/* ACTIVE CHAPTER CANVAS */}
+              {/* PDF DOCUMENT CANVAS */}
               <View style={styles.pdfDocumentCanvas}>
                 <View style={styles.pdfDocHeader}>
-                  <View style={styles.activeChapterPill}>
-                    <Text style={styles.activeChapterPillText}>{`UNIT ${activePdfViewing.chapterNumber || 1}`}</Text>
-                  </View>
-                  <Text style={styles.pdfDocTitleText}>{activePdfViewing.chapterTitle || activePdfViewing.title}</Text>
-                  <Text style={styles.pdfDocMetaText}>{`Government of Nepal • CDC Class 10 • Page ${activePdfViewing.page || 1}`}</Text>
+                  <Text style={styles.pdfDocTitleText}>{activePdfViewing.subject.name}</Text>
+                  <Text style={styles.pdfDocMetaText}>Government of Nepal • CDC Class 10 Syllabus</Text>
                 </View>
 
                 <View style={styles.pdfContentBlock}>
-                  <Text style={styles.pdfSectionHeading}>Key Concepts & Theory:</Text>
-                  <Text style={styles.pdfBodyText}>{activePdfViewing.summary}</Text>
+                  <Text style={styles.pdfSectionHeading}>Complete Units Overview:</Text>
+                  <Text style={styles.pdfBodyText}>{activePdfViewing.subject.overview}</Text>
                 </View>
 
                 <View style={styles.pdfContentBlock}>
                   <Text style={styles.pdfSectionHeading}>Exam Preparation Guidelines:</Text>
                   <Text style={styles.pdfBodyText}>
-                    1. Study all standard definitions, principles, and laws carefully.{'\n'}
-                    2. Practice the numerical formulas and step-by-step proofs.{'\n'}
-                    3. Tap the "Ask Guru AI" button below for instant derivations and solutions.
+                    1. Thoroughly practice numerical formulas, theorems, and definitions from this official CDC textbook.{'\n'}
+                    2. Draw neat, labeled diagrams for science and map-pointing for social studies.{'\n'}
+                    3. Tap the "Ask Guru AI" button below for instant derivations and step-by-step proofs.
                   </Text>
                 </View>
               </View>
@@ -1044,38 +926,34 @@ export default function App() {
               <TouchableOpacity
                 style={styles.askGuruLargeButton}
                 onPress={() => {
-                  setPrompt(`Explain the most important SEE exam questions from ${activePdfViewing.title}, ${activePdfViewing.chapterTitle || ''}.`);
+                  setPrompt(`Explain the most important SEE exam questions and derivations for ${activePdfViewing.subject.name}.`);
                   setIsChatModalOpen(true);
                 }}
               >
-                <Bot size={20} color="#000000" />
-                <Text style={styles.askGuruLargeButtonText}>Ask Guru AI To Explain This Chapter</Text>
+                <Bot size={20} color="#000000" style={{ marginRight: 8 }} />
+                <Text style={styles.askGuruLargeButtonText}>Ask Guru AI To Explain This Book</Text>
               </TouchableOpacity>
             </ScrollView>
           </SafeAreaView>
         </View>
       )}
 
-      {/* --- FULL-PAGE GURU AI ASSISTANT MODAL (NO CLUTTER, FULL SCREEN) --- */}
+      {/* --- FULL-PAGE GURU AI ASSISTANT (EXACT MATCH TO SCREENSHOT 2) --- */}
       {isChatModalOpen && (
         <View style={styles.fullModalOverlay}>
           <SafeAreaView style={styles.darkContainer}>
+            {/* Top Bar with X on left, Robot Icon on right */}
             <View style={styles.chatTopBar}>
               <TouchableOpacity style={styles.chatCloseButton} onPress={() => setIsChatModalOpen(false)}>
                 <X size={24} color="#ffffff" />
               </TouchableOpacity>
-              <View style={styles.chatHeaderCenter}>
-                <Text style={styles.chatHeaderTitle}>Guru AI Assistant</Text>
-                <View style={styles.offlineStatusRow}>
-                  <View style={styles.offlineDot} />
-                  <Text style={styles.offlineStatusText}>100% Offline On-Device</Text>
-                </View>
-              </View>
+
               <TouchableOpacity style={styles.chatBotIconHeader} onPress={createNewChat}>
-                <Plus size={20} color="#ffffff" />
+                <Bot size={24} color="#ffffff" />
               </TouchableOpacity>
             </View>
 
+            {/* Chat Body & Input Bar */}
             <KeyboardAvoidingView style={styles.chatBody} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
               {activeMessages.length === 0 ? (
                 <View style={styles.chatEmptyView}>
@@ -1119,40 +997,42 @@ export default function App() {
                 />
               )}
 
-              {/* CHAT INPUT BAR */}
-              <View style={styles.chatInputBar}>
-                <TouchableOpacity
-                  style={styles.chatAttachButton}
-                  onPress={async () => {
-                    try {
-                      const res = await DocumentPicker.getDocumentAsync({ type: '*/*' });
-                      if (!res.canceled && res.assets && res.assets.length > 0) {
-                        const file = res.assets[0];
-                        setAttachedFileName(file.name);
-                        setAttachedFileContent('Attached file for study analysis');
-                      }
-                    } catch (_) {}
-                  }}
-                >
-                  <Plus size={22} color="#ffffff" />
-                </TouchableOpacity>
+              {/* Bottom Input Area matching Screenshot 2 */}
+              <View style={styles.chatInputBarContainer}>
+                <View style={styles.chatInputPillWrapper}>
+                  <TouchableOpacity
+                    style={styles.chatAttachIconButton}
+                    onPress={async () => {
+                      try {
+                        const res = await DocumentPicker.getDocumentAsync({ type: '*/*' });
+                        if (!res.canceled && res.assets && res.assets.length > 0) {
+                          const file = res.assets[0];
+                          setAttachedFileName(file.name);
+                          setAttachedFileContent('Attached file for study analysis');
+                        }
+                      } catch (_) {}
+                    }}
+                  >
+                    <Plus size={20} color="#ffffff" />
+                  </TouchableOpacity>
 
-                <TextInput
-                  style={styles.chatTextInput}
-                  value={prompt}
-                  onChangeText={setPrompt}
-                  placeholder="Ask Guru anything offline..."
-                  placeholderTextColor="#71717a"
-                  multiline
-                />
+                  <TextInput
+                    style={styles.chatPillInput}
+                    value={prompt}
+                    onChangeText={setPrompt}
+                    placeholder="Type a message..."
+                    placeholderTextColor="#71717a"
+                    multiline
+                  />
 
-                <TouchableOpacity
-                  style={[styles.chatSendButton, (!prompt.trim() && !attachedFileContent) && styles.chatSendButtonDisabled]}
-                  disabled={!prompt.trim() && !attachedFileContent}
-                  onPress={sendPrompt}
-                >
-                  <Send size={18} color="#ffffff" />
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.chatSendIconButton}
+                    disabled={!prompt.trim() && !attachedFileContent}
+                    onPress={sendPrompt}
+                  >
+                    <Send size={18} color={prompt.trim() || attachedFileContent ? '#ffffff' : '#52525b'} />
+                  </TouchableOpacity>
+                </View>
               </View>
             </KeyboardAvoidingView>
           </SafeAreaView>
@@ -1162,7 +1042,7 @@ export default function App() {
   );
 }
 
-// --- STYLESHEET (CLEAN SENIOR-LEVEL DARK THEME) ---
+// --- STYLESHEET (PIXEL-PERFECT DARK MODE MATCHING SCREENSHOTS) ---
 const styles = StyleSheet.create({
   darkContainer: {
     flex: 1,
@@ -1276,29 +1156,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#000000',
   },
+  // TOP HEADER
   topHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#121214',
+    paddingVertical: 14,
   },
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  headerLeftGroup: {
+    alignItems: 'flex-start',
   },
   appHeaderTitle: {
     fontSize: 22,
     fontWeight: '800',
     color: '#ffffff',
+    marginBottom: 4,
   },
   classBadge: {
-    backgroundColor: '#18181b',
+    backgroundColor: '#121214',
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#27272a',
@@ -1306,90 +1184,97 @@ const styles = StyleSheet.create({
   classBadgeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#a1a1aa',
+    color: '#d4d4d8',
   },
-  headerIconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#141416',
-    borderWidth: 1,
-    borderColor: '#24242a',
+  langPillButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#121214',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  langPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   mainScroll: {
-    paddingHorizontal: 18,
-    paddingTop: 16,
+    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 90,
-    gap: 16,
   },
   greetingBlock: {
-    gap: 4,
+    marginBottom: 16,
   },
   greetingTitle: {
     fontSize: 24,
     fontWeight: '800',
     color: '#ffffff',
+    marginBottom: 4,
   },
   greetingSub: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#a1a1aa',
+    lineHeight: 18,
   },
   textbookBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#121214',
+    backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
     borderRadius: 16,
     padding: 16,
+    marginBottom: 18,
   },
   textbookBannerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
     flex: 1,
   },
   textbookIconBox: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: '#1c1c20',
+    backgroundColor: '#18181b',
     borderWidth: 1,
-    borderColor: '#2a2a32',
+    borderColor: '#27272a',
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 12,
   },
   textbookTextGroup: {
     flex: 1,
-    gap: 2,
   },
   textbookBannerTitle: {
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+    marginBottom: 2,
   },
   textbookBannerSub: {
     fontSize: 12,
     color: '#a1a1aa',
+    lineHeight: 16,
   },
   seeAllRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
   },
   seeAllText: {
     fontSize: 12,
     fontWeight: '600',
     color: '#a1a1aa',
+    marginRight: 2,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
+    marginBottom: 12,
   },
   sectionTitleText: {
     fontSize: 15,
@@ -1399,21 +1284,23 @@ const styles = StyleSheet.create({
   subjectGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    justifyContent: 'space-between',
+    marginBottom: 16,
   },
   subjectFolderCard: {
-    width: '48%',
-    backgroundColor: '#121214',
+    width: '48.5%',
+    backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
     borderRadius: 16,
     padding: 14,
-    gap: 8,
+    marginBottom: 10,
   },
   subjectCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 8,
   },
   unitCountPill: {
     backgroundColor: '#18181b',
@@ -1429,9 +1316,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   subjectCardTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#ffffff',
+    marginBottom: 2,
   },
   subjectCardPages: {
     fontSize: 11,
@@ -1439,37 +1327,40 @@ const styles = StyleSheet.create({
   },
   dualStatsRow: {
     flexDirection: 'row',
-    gap: 12,
+    justifyContent: 'space-between',
+    marginBottom: 14,
   },
   statCard: {
-    flex: 1,
-    backgroundColor: '#121214',
+    width: '48.5%',
+    backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
     borderRadius: 16,
     padding: 14,
-    gap: 4,
   },
   statHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    marginBottom: 6,
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#a1a1aa',
+    marginLeft: 6,
     letterSpacing: 0.5,
   },
   statValue: {
     fontSize: 28,
     fontWeight: '800',
     color: '#ffffff',
+    marginBottom: 2,
   },
   statFocusSubject: {
     fontSize: 16,
     fontWeight: '700',
     color: '#ffffff',
+    marginBottom: 2,
   },
   statSubText: {
     fontSize: 11,
@@ -1477,39 +1368,47 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   quizCard: {
-    backgroundColor: '#121214',
+    backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
     borderRadius: 16,
     padding: 16,
-    gap: 12,
+    marginBottom: 14,
   },
   quizHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    marginBottom: 8,
   },
   quizTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#ffffff',
+    marginLeft: 6,
   },
   quizQuestionText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
     color: '#e4e4e7',
-    lineHeight: 20,
+    lineHeight: 18,
+    marginBottom: 12,
   },
   quizOptionsGrid: {
     gap: 8,
+    marginBottom: 12,
+  },
+  quizRowTwo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
   quizOptionPill: {
-    backgroundColor: '#18181b',
+    width: '48.5%',
+    backgroundColor: '#121214',
     borderWidth: 1,
     borderColor: '#27272a',
     borderRadius: 10,
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
   },
   quizOptionPillSelected: {
     borderColor: '#ffffff',
@@ -1523,7 +1422,7 @@ const styles = StyleSheet.create({
     borderColor: '#f43f5e',
   },
   quizOptionText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#a1a1aa',
     fontWeight: '500',
   },
@@ -1534,7 +1433,7 @@ const styles = StyleSheet.create({
   feedbackBox: {
     padding: 12,
     borderRadius: 10,
-    gap: 4,
+    marginBottom: 10,
   },
   feedbackCorrect: {
     backgroundColor: '#064e3b',
@@ -1546,6 +1445,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#ffffff',
+    marginBottom: 2,
   },
   feedbackExplain: {
     fontSize: 12,
@@ -1556,12 +1456,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
     paddingVertical: 8,
     borderWidth: 1,
     borderColor: '#27272a',
     borderRadius: 8,
-    backgroundColor: '#18181b',
+    backgroundColor: '#121214',
   },
   newQuizButtonText: {
     fontSize: 12,
@@ -1571,43 +1470,75 @@ const styles = StyleSheet.create({
   classAwareCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#121214',
+    backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
     borderRadius: 16,
     padding: 16,
-    gap: 14,
+    marginBottom: 14,
   },
   classAwareTextGroup: {
     flex: 1,
-    gap: 2,
+    marginLeft: 12,
+    marginRight: 8,
   },
   classAwareTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: '#ffffff',
+    marginBottom: 2,
   },
   classAwareSub: {
     fontSize: 12,
     color: '#71717a',
     lineHeight: 16,
   },
+  // FLOATING BOT BUTTON (MATCHING SCREENSHOT 1)
   floatingBotButton: {
     position: 'absolute',
-    bottom: 24,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#ffffff',
+    bottom: 74,
+    right: 18,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#18181b',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#ffffff',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 10,
+    zIndex: 99,
   },
+  // BOTTOM TAB BAR (MATCHING SCREENSHOT 1)
+  bottomTabBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: '#000000',
+    borderTopWidth: 1,
+    borderTopColor: '#18181b',
+    paddingVertical: 8,
+  },
+  tabItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  tabLabel: {
+    fontSize: 11,
+    color: '#71717a',
+    marginTop: 3,
+    fontWeight: '500',
+  },
+  tabLabelActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  // FULL MODAL OVERLAY
   fullModalOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000000',
@@ -1620,22 +1551,23 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#1e1e24',
-    gap: 12,
   },
   modalBackButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#18181b',
+    backgroundColor: '#121214',
+    borderWidth: 1,
+    borderColor: '#27272a',
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 12,
   },
   modalHeaderTitleGroup: {
     flex: 1,
-    gap: 2,
   },
   modalHeaderTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
   },
@@ -1643,148 +1575,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#a1a1aa',
   },
-  pdfSelectionScroll: {
-    padding: 20,
-    gap: 16,
-    paddingBottom: 40,
-  },
-  pdfSubjectHero: {
-    alignItems: 'center',
-    backgroundColor: '#121214',
-    borderWidth: 1,
-    borderColor: '#1e1e24',
-    borderRadius: 18,
-    padding: 24,
-    gap: 10,
-  },
-  pdfSubjectHeroTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  pdfSubjectHeroDesc: {
-    fontSize: 13,
-    color: '#a1a1aa',
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  metaBadgeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 6,
-  },
-  metaBadge: {
-    backgroundColor: '#1c1c22',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2e2e38',
-  },
-  metaBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-  selectMediumHeading: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#ffffff',
-    marginTop: 6,
-  },
-  mediumActionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  mediumButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#121214',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-  },
-  mediumButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-  chapterListContainer: {
-    gap: 10,
-  },
-  chapterCardItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#121214',
-    borderWidth: 1,
-    borderColor: '#1e1e24',
-    borderRadius: 14,
-    padding: 14,
-    gap: 12,
-  },
-  chapterNumberBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chapterNumberText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  chapterTextBox: {
-    flex: 1,
-    gap: 2,
-  },
-  chapterTitleMain: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  chapterTitleNe: {
-    fontSize: 12,
-    color: '#a1a1aa',
-  },
-  chapterPageInfo: {
-    fontSize: 11,
-    color: '#71717a',
-    marginTop: 2,
-  },
-  askAiForSubjectBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#ffffff',
-    height: 48,
-    borderRadius: 12,
-    marginTop: 10,
-  },
-  askAiForSubjectBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  // Real PDF Viewport
-  pdfViewportScroll: {
-    padding: 18,
-    gap: 14,
-    paddingBottom: 40,
-  },
   pdfHeaderAiBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
     backgroundColor: '#ffffff',
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -1794,16 +1587,51 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#000000',
+    marginLeft: 4,
+  },
+  pdfMediumSwitchBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#18181b',
+  },
+  pdfMediumPill: {
+    flex: 1,
+    backgroundColor: '#121214',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  pdfMediumPillActive: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+  },
+  pdfMediumPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#a1a1aa',
+  },
+  pdfMediumPillTextActive: {
+    color: '#000000',
+    fontWeight: '700',
+  },
+  pdfViewportScroll: {
+    padding: 16,
+    paddingBottom: 40,
   },
   pdfNoticeBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
     backgroundColor: '#121214',
     borderWidth: 1,
     borderColor: '#1e1e24',
     borderRadius: 14,
     padding: 14,
+    marginBottom: 14,
   },
   pdfNoticeTitle: {
     fontSize: 13,
@@ -1820,46 +1648,33 @@ const styles = StyleSheet.create({
     borderColor: '#1e1e24',
     borderRadius: 16,
     padding: 20,
-    gap: 16,
+    marginBottom: 14,
     minHeight: 320,
   },
   pdfDocHeader: {
     borderBottomWidth: 1,
     borderBottomColor: '#1e1e24',
     paddingBottom: 14,
-    gap: 6,
-  },
-  activeChapterPill: {
-    backgroundColor: '#18181b',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: '#27272a',
-  },
-  activeChapterPillText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#ffffff',
-    letterSpacing: 0.5,
+    marginBottom: 14,
   },
   pdfDocTitleText: {
     fontSize: 18,
     fontWeight: '800',
     color: '#ffffff',
+    marginBottom: 4,
   },
   pdfDocMetaText: {
     fontSize: 11,
     color: '#71717a',
   },
   pdfContentBlock: {
-    gap: 6,
+    marginBottom: 16,
   },
   pdfSectionHeading: {
     fontSize: 13,
     fontWeight: '700',
     color: '#ffffff',
+    marginBottom: 6,
   },
   pdfBodyText: {
     fontSize: 13,
@@ -1870,61 +1685,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
     backgroundColor: '#ffffff',
     height: 48,
     borderRadius: 12,
-    marginTop: 6,
   },
   askGuruLargeButtonText: {
     fontSize: 14,
     fontWeight: '700',
     color: '#000000',
   },
-  // Full-Page Guru AI Chat
+  // FULL-PAGE GURU AI CHAT (MATCHING SCREENSHOT 2)
   chatTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#18181b',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   chatCloseButton: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chatHeaderCenter: {
-    alignItems: 'center',
-    gap: 2,
-  },
-  chatHeaderTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  offlineStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  offlineDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10b981',
-  },
-  offlineStatusText: {
-    fontSize: 11,
-    color: '#a1a1aa',
-    fontWeight: '500',
-  },
   chatBotIconHeader: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1936,13 +1722,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,
-    gap: 12,
   },
   chatEmptyTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#ffffff',
     textAlign: 'center',
+    marginTop: 16,
+    marginBottom: 8,
   },
   chatEmptySub: {
     fontSize: 13,
@@ -1952,17 +1739,17 @@ const styles = StyleSheet.create({
   },
   chatMessageList: {
     padding: 16,
-    gap: 14,
   },
   userMsgRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    marginBottom: 12,
   },
   botMsgRow: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
-    gap: 10,
     alignItems: 'flex-start',
+    marginBottom: 12,
   },
   botAvatarBox: {
     width: 28,
@@ -1971,6 +1758,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 10,
     marginTop: 4,
   },
   userBubble: {
@@ -1990,7 +1778,6 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    gap: 6,
   },
   bubbleText: {
     fontSize: 14,
@@ -2003,6 +1790,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
     alignSelf: 'flex-start',
+    marginBottom: 6,
   },
   chatAttachmentText: {
     fontSize: 11,
@@ -2011,52 +1799,39 @@ const styles = StyleSheet.create({
   loadingBubbleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
   loadingBubbleText: {
     fontSize: 13,
     color: '#a1a1aa',
+    marginLeft: 8,
   },
-  chatInputBar: {
+  chatInputBarContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#000000',
+  },
+  chatInputPillWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#18181b',
-    backgroundColor: '#000000',
-    gap: 10,
-  },
-  chatAttachButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#18181b',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chatTextInput: {
-    flex: 1,
-    minHeight: 40,
-    maxHeight: 100,
-    backgroundColor: '#121214',
+    backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#27272a',
-    borderRadius: 20,
-    paddingHorizontal: 16,
+    borderRadius: 24,
+    paddingHorizontal: 14,
     paddingVertical: 8,
+  },
+  chatAttachIconButton: {
+    marginRight: 10,
+  },
+  chatPillInput: {
+    flex: 1,
+    minHeight: 28,
+    maxHeight: 100,
     fontSize: 14,
     color: '#ffffff',
+    paddingVertical: 0,
   },
-  chatSendButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#27272a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chatSendButtonDisabled: {
-    opacity: 0.3,
+  chatSendIconButton: {
+    marginLeft: 10,
   },
 });
