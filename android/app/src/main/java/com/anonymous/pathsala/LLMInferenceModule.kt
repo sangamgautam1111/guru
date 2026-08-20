@@ -1018,7 +1018,9 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         try {
             tts?.stop()
             tts?.shutdown()
-        } catch (_) {}
+        } catch (e: Exception) {
+            Log.w(tag, "TTS shutdown issue: ${e.message}")
+        }
         worker.shutdown()
         try {
             worker.awaitTermination(3, TimeUnit.SECONDS)
