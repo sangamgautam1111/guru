@@ -18,7 +18,14 @@ import com.google.ai.edge.litertlm.ResponseCallback
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.Session
 import com.google.ai.edge.litertlm.SessionConfig
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import java.io.File
+import java.io.FileOutputStream
+import java.util.Locale
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -857,6 +864,139 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         }
     }
 
+    // Native Android Text-to-Speech Engine
+    private var tts: TextToSpeech? = null
+    private var isTtsInitialized = false
+
+    private fun ensureTtsInitialized(onReady: () -> Unit) {
+        if (tts != null && isTtsInitialized) {
+            onReady()
+            return
+        }
+
+        val context = reactApplicationContext
+        tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                isTtsInitialized = true
+                tts?.language = Locale.US
+                tts?.setSpeechRate(0.95f)
+                tts?.setPitch(1.0f)
+                onReady()
+            } else {
+                Log.e(tag, "TTS Initialization failed with status: $status")
+            }
+        }
+    }
+
+    @ReactMethod
+    fun speakText(text: String, promise: Promise) {
+        try {
+            ensureTtsInitialized {
+                val cleanText = text
+                    .replace(Regex("[#*`$~_]"), "")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+
+                tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "GURU_UTTERANCE_${System.currentTimeMillis()}")
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(tag, "TTS speak error: ${e.message}", e)
+            promise.reject("TTS_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun stopSpeaking(promise: Promise) {
+        try {
+            tts?.stop()
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("TTS_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun isSpeaking(promise: Promise) {
+        promise.resolve(tts?.isSpeaking ?: false)
+    }
+
+    @ReactMethod
+    fun getPdfPageCount(assetRelativePath: String, promise: Promise) {
+        worker.execute {
+            try {
+                val context = reactApplicationContext
+                val fullAssetPath = if (assetRelativePath.startsWith("grade10/")) assetRelativePath else "grade10/$assetRelativePath"
+                val inputStream = context.assets.open(fullAssetPath)
+                val cleanName = fullAssetPath.substringAfterLast("/").replace(" ", "_")
+                val outFile = File(context.cacheDir, cleanName)
+
+                if (!outFile.exists() || outFile.length() == 0L) {
+                    outFile.outputStream().use { output -> inputStream.copyTo(output) }
+                } else {
+                    inputStream.close()
+                }
+
+                val pfd = ParcelFileDescriptor.open(outFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                val renderer = PdfRenderer(pfd)
+                val count = renderer.pageCount
+                renderer.close()
+                pfd.close()
+
+                promise.resolve(count)
+            } catch (e: Exception) {
+                Log.e(tag, "Error reading PDF page count: ${e.message}", e)
+                promise.reject("PDF_ERROR", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun renderPdfPage(assetRelativePath: String, pageIndex: Int, promise: Promise) {
+        worker.execute {
+            try {
+                val context = reactApplicationContext
+                val fullAssetPath = if (assetRelativePath.startsWith("grade10/")) assetRelativePath else "grade10/$assetRelativePath"
+                val inputStream = context.assets.open(fullAssetPath)
+                val cleanName = fullAssetPath.substringAfterLast("/").replace(" ", "_")
+                val outFile = File(context.cacheDir, cleanName)
+
+                if (!outFile.exists() || outFile.length() == 0L) {
+                    outFile.outputStream().use { output -> inputStream.copyTo(output) }
+                } else {
+                    inputStream.close()
+                }
+
+                val pfd = ParcelFileDescriptor.open(outFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                val renderer = PdfRenderer(pfd)
+                val safeIndex = pageIndex.coerceIn(0, renderer.pageCount - 1)
+
+                val page = renderer.openPage(safeIndex)
+                val scale = 2
+                val width = page.width * scale
+                val height = page.height * scale
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(android.graphics.Color.WHITE)
+
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                page.close()
+                renderer.close()
+                pfd.close()
+
+                val pageImageFile = File(context.cacheDir, "${cleanName}_p${safeIndex}.jpg")
+                FileOutputStream(pageImageFile).use { fos ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, fos)
+                }
+                bitmap.recycle()
+
+                promise.resolve("file://${pageImageFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.e(tag, "Error rendering PDF page: ${e.message}", e)
+                promise.reject("PDF_RENDER_ERROR", e.message, e)
+            }
+        }
+    }
+
     @ReactMethod
     fun cancelGeneration(promise: Promise) {
         val currentSession = activeSession
@@ -875,6 +1015,10 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
     }
 
     override fun invalidate() {
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (_) {}
         worker.shutdown()
         try {
             worker.awaitTermination(3, TimeUnit.SECONDS)

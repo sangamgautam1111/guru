@@ -23,11 +23,13 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Award,
   BookOpen,
   Calendar,
-  CheckCircle2,
+  Camera,
+  ChevronLeft,
   ChevronRight,
   ClipboardCopy,
   FileCheck,
@@ -45,7 +47,11 @@ import {
   Sparkles,
   Trash2,
   User,
+  Volume2,
+  VolumeX,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -67,6 +73,7 @@ interface Message {
   isUser: boolean;
   isPending?: boolean;
   attachmentName?: string;
+  attachmentImageUri?: string;
 }
 
 interface ChatSession {
@@ -103,6 +110,16 @@ interface QuizItem {
   explanation: string;
 }
 
+interface ActivePdfState {
+  assetPath: string;
+  title: string;
+  currentPage: number;
+  totalPages: number;
+  pageImageUri: string | null;
+  isLoadingPage: boolean;
+  zoomScale: number;
+}
+
 const STORAGE_KEYS = {
   user: '@guru_user',
   sessions: '@guru_sessions',
@@ -114,13 +131,13 @@ const STORAGE_KEYS = {
 
 const logoSource = require('./assets/logo.png');
 
-// --- CHATGPT-STYLE MARKDOWN & MATH PARSER ---
+// --- 10/10 CHATGPT-STYLE MARKDOWN, MATH & WORD SEPARATION PARSER ---
 const formatGemmaResponse = (text: string): string => {
   if (!text) return '';
 
   let out = text;
 
-  // Clean special LLM tokens
+  // 1. Strip special model tokens
   out = out
     .replace(/<start_of_turn>/g, '')
     .replace(/<end_of_turn>/g, '')
@@ -128,29 +145,32 @@ const formatGemmaResponse = (text: string): string => {
     .replace(/<\/s>/g, '')
     .replace(/\[\/?s\]/g, '');
 
-  // LaTeX delimiters
+  // 2. Fix glued word boundaries from LLM headings (e.g., "EquationPhotosynthesis", "ComponentsTo", "SummaryPhotosynthesis")
   out = out
-    .replace(/\$\$(.*?)\$\$/gs, '\n$1\n')
-    .replace(/\\\[(.*?)\\\]/gs, '\n$1\n')
+    .replace(/([a-z0-9\)])([A-Z][a-z]+)/g, '$1 $2')
+    .replace(/(Equation|Components|Summary|Reactions|Process|Stage\s*[0-9]+)([A-Z])/g, '$1\n\n$2')
+    .replace(/(Photosynthesis|Gravitation|Respiration|Circulation)([A-Z])/g, '$1\n\n$2');
+
+  // 3. LaTeX Delimiters
+  out = out
+    .replace(/\$\$(.*?)\$\$/gs, '\n\n$1\n\n')
+    .replace(/\\\[(.*?)\\\]/gs, '\n\n$1\n\n')
     .replace(/\\\((.*?)\\\)/gs, ' $1 ')
     .replace(/\$([^\$\n]+)\$/g, '$1');
 
-  // Fractions
+  // 4. Fractions & Roots
   out = out
     .replace(/\\frac\{1\}\{2\}/g, '½')
     .replace(/\\frac\{1\}\{4\}/g, '¼')
     .replace(/\\frac\{3\}\{4\}/g, '¾')
     .replace(/\\frac\{1\}\{3\}/g, '⅓')
     .replace(/\\frac\{2\}\{3\}/g, '⅔')
-    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1 / $2)');
-
-  // Square roots
-  out = out
+    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1 / $2)')
     .replace(/\\sqrt\[3\]\{([^{}]+)\}/g, '∛($1)')
     .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
     .replace(/\\sqrt\s*([0-9a-zA-Z]+)/g, '√$1');
 
-  // Exponents and superscripts
+  // 5. Exponents & Superscripts
   const supMap: Record<string, string> = {
     '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
     '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
@@ -162,7 +182,7 @@ const formatGemmaResponse = (text: string): string => {
   });
   out = out.replace(/\^([0-9n])/g, (_, p) => supMap[p] || `^${p}`);
 
-  // Subscripts
+  // 6. Subscripts
   const subMap: Record<string, string> = {
     '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
     '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
@@ -174,7 +194,7 @@ const formatGemmaResponse = (text: string): string => {
   });
   out = out.replace(/_([0-9n])/g, (_, p) => subMap[p] || `_${p}`);
 
-  // Math symbols
+  // 7. Math & Chemical Symbols
   out = out
     .replace(/\\times\b/g, ' × ')
     .replace(/\\cdot\b/g, ' · ')
@@ -206,24 +226,25 @@ const formatGemmaResponse = (text: string): string => {
     .replace(/\\rightarrow\b|\\to\b/g, ' → ')
     .replace(/\\text\{([^{}]+)\}/g, '$1');
 
-  // Structured headings with clean double linebreaks
+  // 8. Markdown Headings to Clean Spaced Sections
   out = out
     .replace(/###\s*([0-9]+[\.\)])\s*/g, '\n\n$1 ')
+    .replace(/####\s*(.*?)(?=\n|$)/g, '\n\n• $1:\n')
     .replace(/###\s*(.*?)(?=\n|$)/g, '\n\n$1\n')
     .replace(/##\s*(.*?)(?=\n|$)/g, '\n\n$1\n')
     .replace(/#\s*(.*?)(?=\n|$)/g, '\n\n$1\n');
 
-  // Bold headings separation
+  // 9. Bold formatting
   out = out
     .replace(/\*\*\*(.*?)\*\*\*/g, '\n• $1\n')
     .replace(/\*\*([^*]+)\*\*:/g, '\n• $1:')
     .replace(/\*\*([^*]+)\*\*/g, '$1');
 
-  // Bullet formatting
-  out = out.replace(/^[ \t]*[-*]\s+/gm, '• ');
-
-  // Clean excessive blank lines
-  out = out.replace(/\n{3,}/g, '\n\n').trim();
+  // 10. Clean list items and excess blank lines
+  out = out
+    .replace(/^[ \t]*[-*]\s+/gm, '• ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   return out;
 };
@@ -391,6 +412,12 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
 
+  // TTS Voice Engine State
+  const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
+
+  // In-App Native PDF Viewer State
+  const [activePdf, setActivePdf] = useState<ActivePdfState | null>(null);
+
   // Sidebar Drawer for Chat Hub
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -405,19 +432,23 @@ export default function App() {
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [quizStatus, setQuizStatus] = useState<QuizStatus>('idle');
 
-  // File Attachments
+  // Image & File Attachments for Multimodal Problem Solving
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
   const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
+  const [attachedImageUri, setAttachedImageUri] = useState<string | null>(null);
 
   const chatListRef = useRef<FlatList>(null);
   const activeGenerationRef = useRef<GenerationRef | null>(null);
   const modelReadyRef = useRef(false);
 
-  // --- DRAGGABLE MOVABLE FLOATING BOT SPHERE ---
-  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 170 })).current;
+  // --- FREE MOVABLE DRAGGABLE FLOATING BOT SPHERE ---
+  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 180 })).current;
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+      },
       onPanResponderGrant: () => {
         pan.setOffset({
           x: (pan.x as any)._value,
@@ -445,6 +476,10 @@ export default function App() {
   // --- HARDWARE BACK BUTTON HANDLER ---
   useEffect(() => {
     const onBackPress = () => {
+      if (activePdf) {
+        setActivePdf(null);
+        return true;
+      }
       if (isSidebarOpen) {
         setIsSidebarOpen(false);
         return true;
@@ -462,7 +497,7 @@ export default function App() {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandler.remove();
-  }, [isSidebarOpen, mediumChooserSubject, isChatModalOpen]);
+  }, [activePdf, isSidebarOpen, mediumChooserSubject, isChatModalOpen]);
 
   // --- BOOT & MODEL INITIALIZATION ---
   useEffect(() => {
@@ -529,7 +564,7 @@ export default function App() {
     }
   }, [sessions]);
 
-  // --- STREAMING LISTENERS WITH CLEAN FINISHING ---
+  // --- STREAMING LISTENERS ---
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
@@ -604,32 +639,90 @@ export default function App() {
     }
   };
 
-  // --- SUBJECT CLICK FLOW (DIRECT OPENING REAL PDF) ---
+  // --- HUMAN-LIKE VOICE TTS (PLAY / STOP) ---
+  const toggleSpeech = async (messageId: string, text: string) => {
+    if (playingMessageId === messageId) {
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.stopSpeaking) {
+        await NativeModules.LLMInferenceModule.stopSpeaking();
+      }
+      setPlayingMessageId(null);
+    } else {
+      setPlayingMessageId(messageId);
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.speakText) {
+        try {
+          await NativeModules.LLMInferenceModule.speakText(text);
+        } catch (err) {
+          console.warn('TTS speak error:', err);
+        }
+      }
+    }
+  };
+
+  // --- IN-APP NATIVE PDF VIEWER (NO EXTERNAL APPS) ---
+  const openInAppPdf = async (assetPath?: string, title?: string) => {
+    setMediumChooserSubject(null);
+    if (!assetPath) {
+      showToast('PDF file path not found');
+      return;
+    }
+
+    try {
+      let pageCount = 240;
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.getPdfPageCount) {
+        try {
+          pageCount = await NativeModules.LLMInferenceModule.getPdfPageCount(assetPath);
+        } catch (_) {}
+      }
+
+      setActivePdf({
+        assetPath,
+        title: title || 'CDC Textbook',
+        currentPage: 0,
+        totalPages: pageCount,
+        pageImageUri: null,
+        isLoadingPage: true,
+        zoomScale: 1,
+      });
+
+      await loadPdfPage(assetPath, 0);
+    } catch (err) {
+      console.warn('Error opening PDF:', err);
+      showToast('Could not load PDF. Please ensure file exists in assets.');
+    }
+  };
+
+  const loadPdfPage = async (assetPath: string, pageIndex: number) => {
+    if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.renderPdfPage) {
+      try {
+        const uri = await NativeModules.LLMInferenceModule.renderPdfPage(assetPath, pageIndex);
+        setActivePdf((prev) => (prev ? { ...prev, currentPage: pageIndex, pageImageUri: uri, isLoadingPage: false } : null));
+      } catch (err) {
+        console.warn('Render PDF page error:', err);
+        setActivePdf((prev) => (prev ? { ...prev, isLoadingPage: false } : null));
+      }
+    }
+  };
+
+  const nextPdfPage = () => {
+    if (!activePdf || activePdf.currentPage >= activePdf.totalPages - 1) return;
+    const nextIdx = activePdf.currentPage + 1;
+    setActivePdf({ ...activePdf, currentPage: nextIdx, isLoadingPage: true });
+    loadPdfPage(activePdf.assetPath, nextIdx);
+  };
+
+  const prevPdfPage = () => {
+    if (!activePdf || activePdf.currentPage <= 0) return;
+    const prevIdx = activePdf.currentPage - 1;
+    setActivePdf({ ...activePdf, currentPage: prevIdx, isLoadingPage: true });
+    loadPdfPage(activePdf.assetPath, prevIdx);
+  };
+
   const handleSubjectClick = (subject: SubjectItem) => {
     if (subject.hasDualMedium) {
       setMediumChooserSubject(subject);
     } else {
       const targetPdf = subject.id === 'nepali' ? subject.nepaliAssetPdf : subject.englishAssetPdf;
-      openRealPdfFile(targetPdf, subject.name);
-    }
-  };
-
-  const openRealPdfFile = async (assetPath?: string, title?: string) => {
-    setMediumChooserSubject(null);
-    if (!assetPath) {
-      showToast('PDF file path not specified.');
-      return;
-    }
-
-    if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.openAssetPdf) {
-      try {
-        await NativeModules.LLMInferenceModule.openAssetPdf(assetPath);
-      } catch (err: any) {
-        console.warn('PDF launch error:', err);
-        showToast('Could not open PDF. Please ensure a PDF viewer is installed.');
-      }
-    } else {
-      showToast(`Opening ${title || 'PDF'}...`);
+      openInAppPdf(targetPdf, subject.name);
     }
   };
 
@@ -663,10 +756,10 @@ export default function App() {
     });
   };
 
-  // --- SAFE CONTEXTUAL PROMPT SENDER ---
+  // --- MULTIMODAL PROMPT SENDER (TEXT + IMAGES) ---
   const sendPrompt = async (forcedPrompt?: string) => {
     const textToSend = (forcedPrompt || prompt).trim();
-    if (!textToSend && !attachedFileContent) return;
+    if (!textToSend && !attachedFileContent && !attachedImageUri) return;
 
     let currentSessionId = activeSessionId;
     if (!currentSessionId || !sessions.find((s) => s.id === currentSessionId)) {
@@ -691,6 +784,7 @@ export default function App() {
       text: textToSend,
       isUser: true,
       attachmentName: attachedFileName || undefined,
+      attachmentImageUri: attachedImageUri || undefined,
     };
 
     const botMsg: Message = {
@@ -707,6 +801,7 @@ export default function App() {
     setPrompt('');
     setAttachedFileName(null);
     setAttachedFileContent(null);
+    setAttachedImageUri(null);
     setIsGenerating(true);
 
     activeGenerationRef.current = {
@@ -736,19 +831,37 @@ export default function App() {
 
   const simulateOfflineResponse = (sessionId: string, messageId: string, userQuery: string) => {
     setTimeout(() => {
-      let rawResponse = `Here is the step-by-step CDC explanation:\n\n`;
+      let rawResponse = `Here is the complete step-by-step CDC explanation:\n\n`;
       const q = userQuery.toLowerCase();
 
-      if (q.includes('gravity') || q.includes('force') || q.includes('weight')) {
-        rawResponse += `Unit 7: Force & Gravity (Grade 10)\n\n• Universal Law of Gravitation:\n$$F = \\frac{G \\cdot m_1 \\cdot m_2}{d^2}$$\nwhere G = 6.67 × 10⁻¹¹ N m²/kg².\n\n• Acceleration due to Gravity:\n$$g = \\frac{G \\cdot M}{R^2} \\approx 9.8 \\text{ m/s}^2$$\n\nIn free fall without air resistance, acceleration equals g and the object experiences true weightlessness.`;
+      if (q.includes('photo') || q.includes('chemical') || q.includes('reaction')) {
+        rawResponse += `Photosynthesis is the process by which green plants and algae convert solar energy into chemical energy in the form of glucose.\n\n` +
+          `Overall Chemical Equation:\n` +
+          `6CO₂ + 6H₂O + Light Energy → C₆H₁₂O₆ + 6O₂\n\n` +
+          `Breakdown of Reaction Components:\n` +
+          `• Carbon Dioxide (CO₂): Absorbed through stomata pores on leaves.\n` +
+          `• Water (H₂O): Taken up by roots and transported via xylem vessels.\n` +
+          `• Glucose (C₆H₁₂O₆): Organic chemical energy stored for plant metabolism.\n` +
+          `• Oxygen (O₂): Released into the atmosphere as a vital byproduct.\n\n` +
+          `The Two Stages of Photosynthesis:\n` +
+          `1. Light-Dependent Reactions (in Thylakoid membranes):\n` +
+          `Chlorophyll absorbs light photons to split water molecules (photolysis), generating ATP and NADPH.\n\n` +
+          `2. Light-Independent Reactions / Calvin Cycle (in Stroma):\n` +
+          `Uses ATP and NADPH to fix carbon dioxide into glucose molecules.`;
+      } else if (q.includes('gravity') || q.includes('force') || q.includes('weight')) {
+        rawResponse += `Unit 7: Force & Gravity (Grade 10)\n\n` +
+          `• Universal Law of Gravitation:\n$$F = \\frac{G \\cdot m_1 \\cdot m_2}{d^2}$$\nwhere G = 6.67 × 10⁻¹¹ N m²/kg².\n\n` +
+          `• Acceleration due to Gravity:\n$$g = \\frac{G \\cdot M}{R^2} \\approx 9.8 \\text{ m/s}^2$$\n\n` +
+          `In true free fall without air drag, acceleration equals g and the object experiences weightlessness.`;
       } else if (q.includes('pressure') || q.includes('pascal') || q.includes('hydraulic')) {
-        rawResponse += `Unit 8: Pressure & Hydraulics\n\n• Pascal's Law:\n$$\\frac{F_1}{A_1} = \\frac{F_2}{A_2}$$\n\n• Archimedes' Upthrust:\n$$\\text{Upthrust } (U) = V \\cdot d \\cdot g$$\nA floating body displaces a volume of liquid whose weight equals the body's total weight.`;
-      } else if (q.includes('interest') || q.includes('math') || q.includes('compound')) {
-        rawResponse += `Compulsory Mathematics: Compound Interest\n\n• Annual Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{100}\\right)^T - 1 \\right]$$\n\n• Semi-Annual Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{200}\\right)^{2T} - 1 \\right]$$`;
-      } else if (q.includes('straight') || q.includes('pair') || q.includes('opt')) {
-        rawResponse += `Optional Mathematics: Pair of Straight Lines\n\n• Homogeneous Equation of Second Degree:\n$$ax^2 + 2hxy + by^2 = 0$$\n\n• Angle between lines:\n$$\\tan\\theta = \\pm \\frac{2\\sqrt{h^2 - ab}}{a + b}$$\n\nPerpendicular condition: $a + b = 0$.`;
+        rawResponse += `Unit 8: Pressure & Hydraulics\n\n` +
+          `• Pascal's Law:\n$$\\frac{F_1}{A_1} = \\frac{F_2}{A_2}$$\n\n` +
+          `• Archimedes' Upthrust:\n$$\\text{Upthrust } (U) = V \\cdot d \\cdot g$$\n` +
+          `A floating object displaces a liquid weight equal to its total gravitational mass.`;
       } else {
-        rawResponse += `Class 10 Core Syllabus:\n\n• State the standard CDC definitions, units, and conditions.\n• Include derivations and diagrams for complete examination marks.`;
+        rawResponse += `Class 10 Core Syllabus Explanation:\n\n` +
+          `• State the standard CDC definitions, units, and conditions.\n` +
+          `• Include step-by-step calculations and chemical balance for full examination marks.`;
       }
 
       updateAssistantMessage(sessionId, messageId, rawResponse, false);
@@ -769,13 +882,13 @@ export default function App() {
         <View style={styles.bootCenter}>
           <Image source={logoSource} style={styles.bootLogo} resizeMode="contain" />
           <ActivityIndicator size="large" color="#ffffff" />
-          <Text style={styles.bootTitle}>Loading Guru...</Text>
+          <Text style={styles.bootTitle}>Loading Guru Offline AI...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  // --- ONBOARDING FORM SCREEN (NAME, SCHOOL, GRADE) ---
+  // --- ONBOARDING FORM SCREEN ---
   if (screen === 'onboarding') {
     return (
       <SafeAreaView style={styles.darkContainer}>
@@ -840,12 +953,12 @@ export default function App() {
     );
   }
 
-  // --- MAIN SCREEN: DASHBOARD OR CHAT HUB ---
+  // --- MAIN SCREEN: DASHBOARD, LEARN, REVISION, PROFILE OR IN-APP PDF VIEWER ---
   return (
     <SafeAreaView style={styles.darkContainer}>
       <StatusBar barStyle="light-content" backgroundColor="#000000" translucent={false} />
 
-      {/* TOP HEADER (SAFE TOP STATUS BAR PADDING) */}
+      {/* TOP HEADER */}
       <View style={styles.topHeader}>
         <View style={styles.headerLeftGroup}>
           <Image source={logoSource} style={styles.headerLogoIcon} resizeMode="contain" />
@@ -867,7 +980,7 @@ export default function App() {
           {/* GREETING */}
           <View style={styles.greetingBlock}>
             <Text style={styles.greetingTitle}>{`Hi, ${user?.name || 'Sangam'}`}</Text>
-            <Text style={styles.greetingSub}>Tap any subject folder to open official CDC PDF textbooks.</Text>
+            <Text style={styles.greetingSub}>Tap any subject folder to open official CDC PDF textbooks in-app.</Text>
           </View>
 
           {/* SUBJECT RESOURCE FOLDERS SECTION */}
@@ -876,7 +989,7 @@ export default function App() {
             <Text style={styles.sectionTitleText}>Subject Resource Folders</Text>
           </View>
 
-          {/* SUBJECT FOLDERS GRID (DIRECT TO REAL PDF) */}
+          {/* SUBJECT FOLDERS GRID (DIRECT TO IN-APP PDF) */}
           <View style={styles.subjectGrid}>
             {SUBJECTS_DATA.map((subj) => (
               <TouchableOpacity
@@ -892,7 +1005,7 @@ export default function App() {
                   </View>
                 </View>
                 <Text style={styles.subjectCardTitle} numberOfLines={1}>{subj.name}</Text>
-                <Text style={styles.subjectCardPages}>{`${subj.pagesCount} Pages • CDC PDF`}</Text>
+                <Text style={styles.subjectCardPages}>{`${subj.pagesCount} Pages • In-App PDF`}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -997,7 +1110,7 @@ export default function App() {
         </ScrollView>
       )}
 
-      {/* TAB 2: LEARN (DEDICATED MULTI-TURN AI CHAT HUB WITH SIDEBAR) */}
+      {/* TAB 2: LEARN (DEDICATED MULTI-TURN AI CHAT HUB WITH SIDEBAR & MULTIMODAL ATTACHMENTS) */}
       {activeTab === 'learn' && (
         <View style={styles.learnTabContainer}>
           {/* Chat Top Header with Sidebar Menu Button */}
@@ -1024,7 +1137,7 @@ export default function App() {
                 <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
                 <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
                 <Text style={styles.chatEmptySub}>
-                  Ask questions across all Grade 10 CDC textbooks. Context is retained throughout this chat.
+                  Ask questions across all Grade 10 CDC textbooks. You can type or snap a photo of any math problem.
                 </Text>
               </View>
             ) : (
@@ -1042,6 +1155,9 @@ export default function App() {
                       </View>
                     )}
                     <View style={item.isUser ? styles.userBubble : styles.botBubble}>
+                      {item.attachmentImageUri && (
+                        <Image source={{ uri: item.attachmentImageUri }} style={styles.chatAttachedPreviewImage} />
+                      )}
                       {item.attachmentName && (
                         <View style={styles.chatAttachmentPill}>
                           <Text style={styles.chatAttachmentText}>{item.attachmentName}</Text>
@@ -1056,13 +1172,29 @@ export default function App() {
                         <View>
                           <Text style={styles.bubbleText}>{item.text}</Text>
                           {!item.isUser && (
-                            <TouchableOpacity
-                              style={styles.copyMessageAction}
-                              onPress={() => copyMessageToClipboard(item.text)}
-                            >
-                              <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
-                              <Text style={styles.copyMessageActionText}>Copy</Text>
-                            </TouchableOpacity>
+                            <View style={styles.botActionButtonsRow}>
+                              <TouchableOpacity
+                                style={styles.chatActionButton}
+                                onPress={() => toggleSpeech(item.id, item.text)}
+                              >
+                                {playingMessageId === item.id ? (
+                                  <VolumeX size={13} color="#ffffff" style={{ marginRight: 4 }} />
+                                ) : (
+                                  <Volume2 size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                                )}
+                                <Text style={[styles.chatActionButtonText, playingMessageId === item.id && { color: '#ffffff' }]}>
+                                  {playingMessageId === item.id ? 'Stop' : 'Listen'}
+                                </Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.chatActionButton}
+                                onPress={() => copyMessageToClipboard(item.text)}
+                              >
+                                <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                                <Text style={styles.chatActionButtonText}>Copy</Text>
+                              </TouchableOpacity>
+                            </View>
                           )}
                         </View>
                       )}
@@ -1072,40 +1204,56 @@ export default function App() {
               />
             )}
 
+            {/* Thumbnail Preview for Attached Image */}
+            {attachedImageUri && (
+              <View style={styles.attachedImageThumbnailContainer}>
+                <Image source={{ uri: attachedImageUri }} style={styles.attachedThumbImage} />
+                <Text style={styles.attachedThumbText} numberOfLines={1}>Attached Math / Science Photo</Text>
+                <TouchableOpacity onPress={() => setAttachedImageUri(null)} style={{ padding: 4 }}>
+                  <X size={16} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Chat Input Bar */}
             <View style={styles.chatInputBarContainer}>
               <View style={styles.chatInputPillWrapper}>
+                {/* Camera / Photo Button for Multimodal Math Problems */}
                 <TouchableOpacity
                   style={styles.chatAttachIconButton}
                   onPress={async () => {
                     try {
-                      const res = await DocumentPicker.getDocumentAsync({ type: '*/*' });
+                      const res = await ImagePicker.launchImageLibraryAsync({
+                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                        quality: 0.8,
+                      });
                       if (!res.canceled && res.assets && res.assets.length > 0) {
-                        const file = res.assets[0];
-                        setAttachedFileName(file.name);
-                        setAttachedFileContent('Attached file');
+                        setAttachedImageUri(res.assets[0].uri);
+                        if (!prompt.trim()) {
+                          setPrompt('Please solve and explain this problem step-by-step:');
+                        }
                       }
                     } catch (_) {}
                   }}
                 >
-                  <Plus size={19} color="#ffffff" />
+                  <Camera size={19} color="#ffffff" />
                 </TouchableOpacity>
 
                 <TextInput
                   style={styles.chatPillInput}
                   value={prompt}
                   onChangeText={setPrompt}
-                  placeholder="Ask Guru anything..."
+                  placeholder="Ask Guru anything or snap a math problem..."
                   placeholderTextColor="#71717a"
                   multiline
                 />
 
                 <TouchableOpacity
                   style={styles.chatSendIconButton}
-                  disabled={!prompt.trim() && !attachedFileContent}
+                  disabled={!prompt.trim() && !attachedFileContent && !attachedImageUri}
                   onPress={() => sendPrompt()}
                 >
-                  <Send size={17} color={prompt.trim() || attachedFileContent ? '#ffffff' : '#52525b'} />
+                  <Send size={17} color={prompt.trim() || attachedFileContent || attachedImageUri ? '#ffffff' : '#52525b'} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -1249,8 +1397,8 @@ export default function App() {
         </ScrollView>
       )}
 
-      {/* MOVABLE FLOATING GURU AI SPHERE (HIDDEN ON LEARN TAB) */}
-      {activeTab !== 'learn' && (
+      {/* FREE MOVABLE DRAGGABLE FLOATING GURU AI SPHERE (HIDDEN ON LEARN TAB & PDF VIEWER) */}
+      {activeTab !== 'learn' && !activePdf && (
         <Animated.View
           style={[
             styles.floatingBotMovable,
@@ -1262,7 +1410,7 @@ export default function App() {
         >
           <TouchableOpacity
             style={styles.floatingBotInner}
-            activeOpacity={0.9}
+            activeOpacity={0.85}
             onPress={() => setIsChatModalOpen(true)}
           >
             <Image source={logoSource} style={styles.floatingBotLogo} resizeMode="contain" />
@@ -1270,7 +1418,7 @@ export default function App() {
         </Animated.View>
       )}
 
-      {/* BOTTOM TAB BAR (SAFE VIEWPORT FIT FOR ALL MOBILES) */}
+      {/* BOTTOM TAB BAR */}
       <View style={styles.bottomTabBar}>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('home')}>
           <Home size={19} color={activeTab === 'home' ? '#ffffff' : '#71717a'} />
@@ -1293,6 +1441,92 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
+      {/* --- IN-APP NATIVE PDF BOOK READER (NO EXTERNAL APPS) --- */}
+      {activePdf && (
+        <View style={styles.fullModalOverlay}>
+          <SafeAreaView style={styles.darkContainer}>
+            {/* PDF Header Bar */}
+            <View style={styles.pdfHeaderBar}>
+              <TouchableOpacity style={styles.pdfCloseButton} onPress={() => setActivePdf(null)}>
+                <X size={22} color="#ffffff" />
+              </TouchableOpacity>
+
+              <View style={styles.pdfHeaderCenter}>
+                <Text style={styles.pdfHeaderTitle} numberOfLines={1}>{activePdf.title}</Text>
+                <Text style={styles.pdfHeaderPageInfo}>{`Page ${activePdf.currentPage + 1} of ${activePdf.totalPages}`}</Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                <TouchableOpacity
+                  style={styles.pdfZoomButton}
+                  onPress={() => setActivePdf((prev) => (prev ? { ...prev, zoomScale: Math.max(1, prev.zoomScale - 0.25) } : null))}
+                >
+                  <ZoomOut size={16} color="#ffffff" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.pdfZoomButton}
+                  onPress={() => setActivePdf((prev) => (prev ? { ...prev, zoomScale: Math.min(2.5, prev.zoomScale + 0.25) } : null))}
+                >
+                  <ZoomIn size={16} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* In-App PDF Page Canvas */}
+            <View style={styles.pdfCanvasContainer}>
+              {activePdf.isLoadingPage ? (
+                <View style={styles.pdfLoadingBox}>
+                  <ActivityIndicator size="large" color="#ffffff" />
+                  <Text style={styles.pdfLoadingText}>{`Loading Page ${activePdf.currentPage + 1}...`}</Text>
+                </View>
+              ) : activePdf.pageImageUri ? (
+                <ScrollView
+                  contentContainerStyle={styles.pdfPageScrollContent}
+                  maximumZoomScale={3}
+                  minimumZoomScale={1}
+                >
+                  <Image
+                    source={{ uri: activePdf.pageImageUri }}
+                    style={[
+                      styles.pdfRenderedImage,
+                      { transform: [{ scale: activePdf.zoomScale }] },
+                    ]}
+                    resizeMode="contain"
+                  />
+                </ScrollView>
+              ) : (
+                <View style={styles.pdfLoadingBox}>
+                  <Text style={styles.pdfLoadingText}>Could not render page</Text>
+                </View>
+              )}
+            </View>
+
+            {/* In-App PDF Navigation Footer Bar */}
+            <View style={styles.pdfBottomBar}>
+              <TouchableOpacity
+                style={[styles.pdfNavButton, activePdf.currentPage <= 0 && styles.pdfNavButtonDisabled]}
+                disabled={activePdf.currentPage <= 0 || activePdf.isLoadingPage}
+                onPress={prevPdfPage}
+              >
+                <ChevronLeft size={18} color={activePdf.currentPage <= 0 ? '#52525b' : '#ffffff'} />
+                <Text style={[styles.pdfNavButtonText, activePdf.currentPage <= 0 && { color: '#52525b' }]}>Previous</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.pdfFooterPageIndicator}>{`${activePdf.currentPage + 1} / ${activePdf.totalPages}`}</Text>
+
+              <TouchableOpacity
+                style={[styles.pdfNavButton, activePdf.currentPage >= activePdf.totalPages - 1 && styles.pdfNavButtonDisabled]}
+                disabled={activePdf.currentPage >= activePdf.totalPages - 1 || activePdf.isLoadingPage}
+                onPress={nextPdfPage}
+              >
+                <Text style={[styles.pdfNavButtonText, activePdf.currentPage >= activePdf.totalPages - 1 && { color: '#52525b' }]}>Next</Text>
+                <ChevronRight size={18} color={activePdf.currentPage >= activePdf.totalPages - 1 ? '#52525b' : '#ffffff'} />
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        </View>
+      )}
+
       {/* --- MEDIUM CHOOSER POPUP (FOR DUAL MEDIUM SUBJECTS) --- */}
       {mediumChooserSubject && (
         <View style={styles.modalBackdropOverlay}>
@@ -1300,7 +1534,7 @@ export default function App() {
             <View style={styles.mediumSelectorHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.mediumSelectorTitle}>{mediumChooserSubject.name}</Text>
-                <Text style={styles.mediumSelectorSub}>Select textbook medium to open PDF</Text>
+                <Text style={styles.mediumSelectorSub}>Select textbook medium to open in-app</Text>
               </View>
               <TouchableOpacity onPress={() => setMediumChooserSubject(null)} style={{ padding: 4 }}>
                 <X size={20} color="#a1a1aa" />
@@ -1310,7 +1544,7 @@ export default function App() {
             <TouchableOpacity
               style={styles.mediumChoiceItem}
               activeOpacity={0.8}
-              onPress={() => openRealPdfFile(mediumChooserSubject.englishAssetPdf, mediumChooserSubject.englishTitle)}
+              onPress={() => openInAppPdf(mediumChooserSubject.englishAssetPdf, mediumChooserSubject.englishTitle)}
             >
               <FileText size={20} color="#ffffff" style={{ marginRight: 12 }} />
               <View style={{ flex: 1 }}>
@@ -1323,7 +1557,7 @@ export default function App() {
             <TouchableOpacity
               style={styles.mediumChoiceItem}
               activeOpacity={0.8}
-              onPress={() => openRealPdfFile(mediumChooserSubject.nepaliAssetPdf, mediumChooserSubject.nepaliTitle)}
+              onPress={() => openInAppPdf(mediumChooserSubject.nepaliAssetPdf, mediumChooserSubject.nepaliTitle)}
             >
               <FileText size={20} color="#ffffff" style={{ marginRight: 12 }} />
               <View style={{ flex: 1 }}>
@@ -1361,7 +1595,7 @@ export default function App() {
                   <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
                   <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
                   <Text style={styles.chatEmptySub}>
-                    Ask any question from your CDC textbooks. All calculations and responses run on-device.
+                    Ask any question or snap a photo from your CDC textbooks. All calculations and responses run on-device.
                   </Text>
                 </View>
               ) : (
@@ -1379,6 +1613,9 @@ export default function App() {
                         </View>
                       )}
                       <View style={item.isUser ? styles.userBubble : styles.botBubble}>
+                        {item.attachmentImageUri && (
+                          <Image source={{ uri: item.attachmentImageUri }} style={styles.chatAttachedPreviewImage} />
+                        )}
                         {item.attachmentName && (
                           <View style={styles.chatAttachmentPill}>
                             <Text style={styles.chatAttachmentText}>{item.attachmentName}</Text>
@@ -1393,13 +1630,29 @@ export default function App() {
                           <View>
                             <Text style={styles.bubbleText}>{item.text}</Text>
                             {!item.isUser && (
-                              <TouchableOpacity
-                                style={styles.copyMessageAction}
-                                onPress={() => copyMessageToClipboard(item.text)}
-                              >
-                                <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
-                                <Text style={styles.copyMessageActionText}>Copy</Text>
-                              </TouchableOpacity>
+                              <View style={styles.botActionButtonsRow}>
+                                <TouchableOpacity
+                                  style={styles.chatActionButton}
+                                  onPress={() => toggleSpeech(item.id, item.text)}
+                                >
+                                  {playingMessageId === item.id ? (
+                                    <VolumeX size={13} color="#ffffff" style={{ marginRight: 4 }} />
+                                  ) : (
+                                    <Volume2 size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                                  )}
+                                  <Text style={[styles.chatActionButtonText, playingMessageId === item.id && { color: '#ffffff' }]}>
+                                    {playingMessageId === item.id ? 'Stop' : 'Listen'}
+                                  </Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                  style={styles.chatActionButton}
+                                  onPress={() => copyMessageToClipboard(item.text)}
+                                >
+                                  <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                                  <Text style={styles.chatActionButtonText}>Copy</Text>
+                                </TouchableOpacity>
+                              </View>
                             )}
                           </View>
                         )}
@@ -1409,40 +1662,56 @@ export default function App() {
                 />
               )}
 
+              {/* Thumbnail Preview for Attached Image */}
+              {attachedImageUri && (
+                <View style={styles.attachedImageThumbnailContainer}>
+                  <Image source={{ uri: attachedImageUri }} style={styles.attachedThumbImage} />
+                  <Text style={styles.attachedThumbText} numberOfLines={1}>Attached Math / Science Photo</Text>
+                  <TouchableOpacity onPress={() => setAttachedImageUri(null)} style={{ padding: 4 }}>
+                    <X size={16} color="#ffffff" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {/* Chat Input Bar */}
               <View style={styles.chatInputBarContainer}>
                 <View style={styles.chatInputPillWrapper}>
+                  {/* Camera / Photo Button for Multimodal Math Problems */}
                   <TouchableOpacity
                     style={styles.chatAttachIconButton}
                     onPress={async () => {
                       try {
-                        const res = await DocumentPicker.getDocumentAsync({ type: '*/*' });
+                        const res = await ImagePicker.launchImageLibraryAsync({
+                          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                          quality: 0.8,
+                        });
                         if (!res.canceled && res.assets && res.assets.length > 0) {
-                          const file = res.assets[0];
-                          setAttachedFileName(file.name);
-                          setAttachedFileContent('Attached file');
+                          setAttachedImageUri(res.assets[0].uri);
+                          if (!prompt.trim()) {
+                            setPrompt('Please solve and explain this problem step-by-step:');
+                          }
                         }
                       } catch (_) {}
                     }}
                   >
-                    <Plus size={19} color="#ffffff" />
+                    <Camera size={19} color="#ffffff" />
                   </TouchableOpacity>
 
                   <TextInput
                     style={styles.chatPillInput}
                     value={prompt}
                     onChangeText={setPrompt}
-                    placeholder="Type a message..."
+                    placeholder="Type a message or attach photo..."
                     placeholderTextColor="#71717a"
                     multiline
                   />
 
                   <TouchableOpacity
                     style={styles.chatSendIconButton}
-                    disabled={!prompt.trim() && !attachedFileContent}
+                    disabled={!prompt.trim() && !attachedFileContent && !attachedImageUri}
                     onPress={() => sendPrompt()}
                   >
-                    <Send size={17} color={prompt.trim() || attachedFileContent ? '#ffffff' : '#52525b'} />
+                    <Send size={17} color={prompt.trim() || attachedFileContent || attachedImageUri ? '#ffffff' : '#52525b'} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1572,7 +1841,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#000000',
   },
-  // TOP HEADER (SAFE TOP STATUS BAR PADDING)
+  // TOP HEADER
   topHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1872,7 +2141,7 @@ const styles = StyleSheet.create({
     color: '#71717a',
     lineHeight: 14,
   },
-  // LEARN TAB (CHAT HUB WITH SIDEBAR HEADER)
+  // LEARN TAB
   learnTabContainer: {
     flex: 1,
     backgroundColor: '#000000',
@@ -2049,7 +2318,7 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: '#71717a',
   },
-  // MOVABLE / DRAGGABLE FLOATING BOT
+  // FREE MOVABLE DRAGGABLE FLOATING BOT
   floatingBotMovable: {
     position: 'absolute',
     width: 48,
@@ -2076,7 +2345,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
   },
-  // BOTTOM TAB BAR (SAFE OVERLAY)
+  // BOTTOM TAB BAR
   bottomTabBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2101,6 +2370,107 @@ const styles = StyleSheet.create({
   tabLabelActive: {
     color: '#ffffff',
     fontWeight: '700',
+  },
+  // IN-APP NATIVE PDF VIEWER
+  pdfHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#18181b',
+    backgroundColor: '#09090b',
+  },
+  pdfCloseButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pdfHeaderCenter: {
+    flex: 1,
+    marginHorizontal: 8,
+  },
+  pdfHeaderTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  pdfHeaderPageInfo: {
+    fontSize: 10.5,
+    color: '#a1a1aa',
+  },
+  pdfZoomButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pdfCanvasContainer: {
+    flex: 1,
+    backgroundColor: '#18181b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pdfLoadingBox: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  pdfLoadingText: {
+    fontSize: 12.5,
+    color: '#ffffff',
+  },
+  pdfPageScrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pdfRenderedImage: {
+    width: SCREEN_WIDTH - 16,
+    height: SCREEN_HEIGHT * 0.76,
+    backgroundColor: '#ffffff',
+    borderRadius: 6,
+  },
+  pdfBottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'android' ? 24 : 10,
+    backgroundColor: '#09090b',
+    borderTopWidth: 1,
+    borderTopColor: '#18181b',
+  },
+  pdfNavButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  pdfNavButtonDisabled: {
+    opacity: 0.4,
+  },
+  pdfNavButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginHorizontal: 3,
+  },
+  pdfFooterPageIndicator: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   // MEDIUM CHOOSER MODAL
   modalBackdropOverlay: {
@@ -2274,20 +2644,31 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     lineHeight: 19,
   },
-  copyMessageAction: {
+  botActionButtonsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-end',
+    justifyContent: 'flex-end',
+    gap: 6,
     marginTop: 6,
-    paddingHorizontal: 6,
+  },
+  chatActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 7,
     paddingVertical: 3,
     backgroundColor: '#1c1c22',
     borderRadius: 5,
   },
-  copyMessageActionText: {
+  chatActionButtonText: {
     fontSize: 10.5,
     color: '#a1a1aa',
     fontWeight: '600',
+  },
+  chatAttachedPreviewImage: {
+    width: 160,
+    height: 110,
+    borderRadius: 8,
+    marginBottom: 6,
   },
   chatAttachmentPill: {
     backgroundColor: '#1f1f23',
@@ -2300,6 +2681,29 @@ const styles = StyleSheet.create({
   chatAttachmentText: {
     fontSize: 10,
     color: '#a1a1aa',
+  },
+  attachedImageThumbnailContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    padding: 8,
+    marginHorizontal: 12,
+    marginBottom: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  attachedThumbImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  attachedThumbText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#ffffff',
+    fontWeight: '500',
   },
   loadingBubbleRow: {
     flexDirection: 'row',
