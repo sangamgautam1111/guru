@@ -864,6 +864,54 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         }
     }
 
+    @ReactMethod
+    fun checkLocalModelStatus(promise: Promise) {
+        try {
+            val context = reactApplicationContext
+            val possiblePaths = listOf(
+                "/storage/emulated/0/Download/gemma-4-E2B-it.litertlm",
+                "/storage/emulated/0/Download/gemma-3n-E2B-it.litertlm",
+                "/storage/emulated/0/Download/gemma-2b-it-cpu-int4.litertlm",
+                "/storage/emulated/0/Download/gemma-2b-it-gpu-int4.bin",
+                "/storage/emulated/0/Download/gemma-2b.litertlm",
+                File(context.filesDir, "gemma-4-E2B-it.litertlm").absolutePath,
+                File(context.filesDir, "gemma-2b-it-cpu-int4.litertlm").absolutePath,
+                File(context.getExternalFilesDir(null), "gemma-4-E2B-it.litertlm").absolutePath
+            )
+
+            var foundFile: File? = null
+            for (p in possiblePaths) {
+                val f = File(p)
+                if (f.exists() && f.length() > 50L * 1024L * 1024L) {
+                    foundFile = f
+                    break
+                }
+            }
+
+            val map = Arguments.createMap()
+            if (foundFile != null) {
+                val sizeMb = foundFile.length() / (1024L * 1024L)
+                map.putBoolean("found", true)
+                map.putString("path", foundFile.absolutePath)
+                map.putDouble("sizeMb", sizeMb.toDouble())
+                map.putBoolean("isComplete", sizeMb >= 500)
+            } else {
+                map.putBoolean("found", false)
+                map.putString("path", "")
+                map.putDouble("sizeMb", 0.0)
+                map.putBoolean("isComplete", false)
+            }
+
+            val availableRamGb = getAvailableMemoryGb()
+            map.putDouble("availableRamGb", availableRamGb)
+            map.putBoolean("isTtsReady", isTtsInitialized)
+            map.putBoolean("isModelLoaded", engine != null)
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("CHECK_ERROR", e.message, e)
+        }
+    }
+
     // Native Android Text-to-Speech Engine
     private var tts: TextToSpeech? = null
     private var isTtsInitialized = false
