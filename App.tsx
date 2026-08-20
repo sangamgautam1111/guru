@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
   DeviceEventEmitter,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
   NativeModules,
+  PanResponder,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -14,29 +17,30 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
   TouchableOpacity,
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import {
-  ArrowLeft,
+  Award,
   BookOpen,
-  Bot,
   Calendar,
-  ChevronLeft,
+  CheckCircle2,
   ChevronRight,
-  ClipboardList,
-  ExternalLink,
+  ClipboardCopy,
+  FileCheck,
   FileText,
   Folder,
   GraduationCap,
   HelpCircle,
   Home,
+  Menu,
   MessageSquare,
+  PanelLeftClose,
   Plus,
   RotateCcw,
-  School,
   Send,
   Sparkles,
   Trash2,
@@ -44,7 +48,9 @@ import {
   X,
 } from 'lucide-react-native';
 
-type TabState = 'home' | 'learn' | 'progress' | 'profile';
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+type TabState = 'home' | 'learn' | 'revision' | 'profile';
 type ScreenState = 'onboarding' | 'main';
 type SubjectId = 'science' | 'math' | 'social' | 'nepali' | 'english' | 'opt_math' | 'computer';
 type QuizStatus = 'idle' | 'correct' | 'wrong';
@@ -76,16 +82,6 @@ interface GenerationRef {
   messageId: string;
 }
 
-interface ChapterMetadata {
-  number: number;
-  titleEn: string;
-  titleNe: string;
-  pageStart: number;
-  pageEnd: number;
-  formulas: string;
-  keyConcepts: string;
-}
-
 interface SubjectItem {
   id: SubjectId;
   name: string;
@@ -97,7 +93,6 @@ interface SubjectItem {
   nepaliAssetPdf?: string;
   englishTitle: string;
   nepaliTitle: string;
-  chapters: ChapterMetadata[];
 }
 
 interface QuizItem {
@@ -119,75 +114,82 @@ const STORAGE_KEYS = {
 
 const logoSource = require('./assets/logo.png');
 
-// --- LATEX TO HUMAN-READABLE MATH FORMATTER ---
-const convertLatexToReadableMath = (text: string): string => {
+// --- CHATGPT-STYLE MARKDOWN & MATH PARSER ---
+const formatGemmaResponse = (text: string): string => {
   if (!text) return '';
 
-  let converted = text;
+  let out = text;
 
-  // Delimiters
-  converted = converted
-    .replace(/\$\$(.*?)\$\$/gs, '$1')
-    .replace(/\\\[(.*?)\\\]/gs, '$1')
-    .replace(/\\\((.*?)\\\)/gs, '$1')
+  // Clean special LLM tokens
+  out = out
+    .replace(/<start_of_turn>/g, '')
+    .replace(/<end_of_turn>/g, '')
+    .replace(/<eos>/g, '')
+    .replace(/<\/s>/g, '')
+    .replace(/\[\/?s\]/g, '');
+
+  // LaTeX delimiters
+  out = out
+    .replace(/\$\$(.*?)\$\$/gs, '\n$1\n')
+    .replace(/\\\[(.*?)\\\]/gs, '\n$1\n')
+    .replace(/\\\((.*?)\\\)/gs, ' $1 ')
     .replace(/\$([^\$\n]+)\$/g, '$1');
 
   // Fractions
-  converted = converted
+  out = out
     .replace(/\\frac\{1\}\{2\}/g, '½')
     .replace(/\\frac\{1\}\{4\}/g, '¼')
     .replace(/\\frac\{3\}\{4\}/g, '¾')
     .replace(/\\frac\{1\}\{3\}/g, '⅓')
     .replace(/\\frac\{2\}\{3\}/g, '⅔')
-    .replace(/\\frac\{1\}\{5\}/g, '⅕')
     .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1 / $2)');
 
   // Square roots
-  converted = converted
+  out = out
     .replace(/\\sqrt\[3\]\{([^{}]+)\}/g, '∛($1)')
     .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
     .replace(/\\sqrt\s*([0-9a-zA-Z]+)/g, '√$1');
 
-  // Superscripts
-  const superscriptMap: Record<string, string> = {
+  // Exponents and superscripts
+  const supMap: Record<string, string> = {
     '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
     '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
     '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾',
     'n': 'ⁿ', 'i': 'ⁱ', 'x': 'ˣ', 'y': 'ʸ',
   };
-  converted = converted.replace(/\^\{([0-9+\-nixy]+)\}/g, (_, p1) => {
-    return p1.split('').map((c: string) => superscriptMap[c] || c).join('');
+  out = out.replace(/\^\{([0-9+\-nixy]+)\}/g, (_, p) => {
+    return p.split('').map((c: string) => supMap[c] || c).join('');
   });
-  converted = converted.replace(/\^([0-9n])/g, (_, p1) => superscriptMap[p1] || `^${p1}`);
+  out = out.replace(/\^([0-9n])/g, (_, p) => supMap[p] || `^${p}`);
 
   // Subscripts
-  const subscriptMap: Record<string, string> = {
+  const subMap: Record<string, string> = {
     '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
     '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
     '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
     'a': 'ₐ', 'e': 'ₑ', 'o': 'ₒ', 'x': 'ₓ', 'n': 'ₙ',
   };
-  converted = converted.replace(/_\{([0-9+\-aeoxn]+)\}/g, (_, p1) => {
-    return p1.split('').map((c: string) => subscriptMap[c] || c).join('');
+  out = out.replace(/_\{([0-9+\-aeoxn]+)\}/g, (_, p) => {
+    return p.split('').map((c: string) => subMap[c] || c).join('');
   });
-  converted = converted.replace(/_([0-9n])/g, (_, p1) => subscriptMap[p1] || `_${p1}`);
+  out = out.replace(/_([0-9n])/g, (_, p) => subMap[p] || `_${p}`);
 
-  // Symbols
-  converted = converted
-    .replace(/\\times\b/g, '×')
-    .replace(/\\cdot\b/g, '·')
-    .replace(/\\div\b/g, '÷')
-    .replace(/\\pm\b/g, '±')
-    .replace(/\\mp\b/g, '∓')
-    .replace(/\\leq?\b/g, '≤')
-    .replace(/\\geq?\b/g, '≥')
-    .replace(/\\neq?\b/g, '≠')
-    .replace(/\\approx\b/g, '≈')
-    .replace(/\\equiv\b/g, '≡')
-    .replace(/\\propto\b/g, '∝')
-    .replace(/\\infty\b/g, '∞')
-    .replace(/\\sum\b/g, '∑')
-    .replace(/\\int\b/g, '∫')
+  // Math symbols
+  out = out
+    .replace(/\\times\b/g, ' × ')
+    .replace(/\\cdot\b/g, ' · ')
+    .replace(/\\div\b/g, ' ÷ ')
+    .replace(/\\pm\b/g, ' ± ')
+    .replace(/\\mp\b/g, ' ∓ ')
+    .replace(/\\leq?\b/g, ' ≤ ')
+    .replace(/\\geq?\b/g, ' ≥ ')
+    .replace(/\\neq?\b/g, ' ≠ ')
+    .replace(/\\approx\b/g, ' ≈ ')
+    .replace(/\\equiv\b/g, ' ≡ ')
+    .replace(/\\propto\b/g, ' ∝ ')
+    .replace(/\\infty\b/g, ' ∞ ')
+    .replace(/\\sum\b/g, ' ∑ ')
+    .replace(/\\int\b/g, ' ∫ ')
     .replace(/\\degree\b|\^\\circ\b/g, '°')
     .replace(/\\theta\b/g, 'θ')
     .replace(/\\pi\b/g, 'π')
@@ -200,28 +202,37 @@ const convertLatexToReadableMath = (text: string): string => {
     .replace(/\\mu\b/g, 'μ')
     .replace(/\\sigma\b/g, 'σ')
     .replace(/\\omega\b/g, 'ω')
-    .replace(/\\Rightarrow\b|\\implies\b/g, '⇒')
-    .replace(/\\rightarrow\b|\\to\b/g, '→')
-    .replace(/\\Leftarrow\b/g, '⇐')
-    .replace(/\\leftrightarrow\b/g, '↔');
+    .replace(/\\Rightarrow\b|\\implies\b/g, ' ⇒ ')
+    .replace(/\\rightarrow\b|\\to\b/g, ' → ')
+    .replace(/\\text\{([^{}]+)\}/g, '$1');
 
-  // Markdown cleanups
-  converted = converted
-    .replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').replace(/```/g, ''))
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^[ \t]*#{1,6}\s*(.*)$/gm, '$1')
-    .replace(/\\item/g, '• ')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
+  // Structured headings with clean double linebreaks
+  out = out
+    .replace(/###\s*([0-9]+[\.\)])\s*/g, '\n\n$1 ')
+    .replace(/###\s*(.*?)(?=\n|$)/g, '\n\n$1\n')
+    .replace(/##\s*(.*?)(?=\n|$)/g, '\n\n$1\n')
+    .replace(/#\s*(.*?)(?=\n|$)/g, '\n\n$1\n');
 
-  return converted;
+  // Bold headings separation
+  out = out
+    .replace(/\*\*\*(.*?)\*\*\*/g, '\n• $1\n')
+    .replace(/\*\*([^*]+)\*\*:/g, '\n• $1:')
+    .replace(/\*\*([^*]+)\*\*/g, '$1');
+
+  // Bullet formatting
+  out = out.replace(/^[ \t]*[-*]\s+/gm, '• ');
+
+  // Clean excessive blank lines
+  out = out.replace(/\n{3,}/g, '\n\n').trim();
+
+  return out;
 };
 
 // --- DYNAMIC MULTI-SUBJECT QUIZ POOL ---
 const ALL_QUIZ_POOL: QuizItem[] = [
   {
     subject: 'Science & Tech',
-    question: 'What can form when an acid reacts with a base in a neutralization reaction?',
+    question: 'What is the product when an acid reacts with a base in neutralization?',
     options: ['Salt and water', 'Only gas', 'Only metal', 'Ice'],
     correctIndex: 0,
     explanation: 'An acid reacts with a base to form salt and water (e.g., HCl + NaOH -> NaCl + H₂O).',
@@ -236,7 +247,7 @@ const ALL_QUIZ_POOL: QuizItem[] = [
   {
     subject: 'Science & Tech',
     question: 'According to Pascal\'s Law, pressure exerted on an enclosed liquid is transmitted:',
-    options: ['Equally in all directions', 'Only downwards', 'Only to the walls', 'Zero at the bottom'],
+    options: ['Equally in all directions', 'Only downwards', 'Only to the walls', 'Zero at bottom'],
     correctIndex: 0,
     explanation: 'Pascal\'s Law states that pressure applied to an enclosed liquid is transmitted equally and undiminished in every direction.',
   },
@@ -286,48 +297,10 @@ const SUBJECTS_DATA: SubjectItem[] = [
     unitsCount: 15,
     pagesCount: 240,
     hasDualMedium: true,
-    englishAssetPdf: 'science/pdf/english medium/Class 10 Science and Technology Book [English Medium].pdf',
-    nepaliAssetPdf: 'science/pdf/nepali medium/Book - Class 10 Compulsory Science_1754397695.pdf',
-    englishTitle: 'Class 10 Science & Technology (English)',
-    nepaliTitle: 'कक्षा १० विज्ञान तथा प्रविधि (नेपाली)',
-    chapters: [
-      {
-        number: 1,
-        titleEn: 'Scientific Learning',
-        titleNe: 'वैज्ञानिक सिकाइ',
-        pageStart: 1,
-        pageEnd: 11,
-        formulas: 'SI Units, Fundamental & Derived Quantities',
-        keyConcepts: 'Scientific method, measurement precision, parallax error reduction, vernier calipers, micrometer screw gauge.',
-      },
-      {
-        number: 7,
-        titleEn: 'Force and Gravity',
-        titleNe: 'बल र गुरुत्वाकर्षण',
-        pageStart: 82,
-        pageEnd: 97,
-        formulas: 'F = G · (m₁ · m₂) / d², g = (G · M) / R²',
-        keyConcepts: 'Newton universal law of gravitation, variation of g with altitude and depth, free fall, weightlessness.',
-      },
-      {
-        number: 8,
-        titleEn: 'Pressure & Hydraulics',
-        titleNe: 'चाप र हाइड्रोलिक्स',
-        pageStart: 98,
-        pageEnd: 113,
-        formulas: 'P = F / A, F₁ / A₁ = F₂ / A₂, Upthrust (U) = V · d · g',
-        keyConcepts: 'Pascal law and hydraulic lift/brakes, Archimedes principle, laws of floatation, mercury barometer.',
-      },
-      {
-        number: 11,
-        titleEn: 'Electricity & Magnetism',
-        titleNe: 'विद्युत् र चुम्बकत्व',
-        pageStart: 142,
-        pageEnd: 159,
-        formulas: 'V = I · R, P = V · I, E = P · t',
-        keyConcepts: 'Ohm law, domestic electrical wiring, safety fuse, MCB, Faraday electromagnetic induction, transformer.',
-      },
-    ],
+    englishAssetPdf: 'grade10/science/pdf/english medium/Class 10 Science and Technology Book [English Medium].pdf',
+    nepaliAssetPdf: 'grade10/science/pdf/nepali medium/Book - Class 10 Compulsory Science_1754397695.pdf',
+    englishTitle: 'Class 10 Science & Technology (English Medium)',
+    nepaliTitle: 'कक्षा १० विज्ञान तथा प्रविधि (नेपाली माध्यम)',
   },
   {
     id: 'math',
@@ -336,39 +309,10 @@ const SUBJECTS_DATA: SubjectItem[] = [
     unitsCount: 14,
     pagesCount: 212,
     hasDualMedium: true,
-    englishAssetPdf: 'maths/pdf/english medium/Class-10-Maths-in-English.pdf',
-    nepaliAssetPdf: 'maths/pdf/nepali medium/0010_MathsGrade10NepaliVersion.pdf',
-    englishTitle: 'Class 10 Compulsory Mathematics (English)',
-    nepaliTitle: 'कक्षा १० अनिवार्य गणित (नेपाली)',
-    chapters: [
-      {
-        number: 1,
-        titleEn: 'Sets & Venn Diagrams',
-        titleNe: 'समूह र भेनचित्र',
-        pageStart: 1,
-        pageEnd: 17,
-        formulas: 'n(A ∪ B) = n(A) + n(B) - n(A ∩ B)',
-        keyConcepts: 'Cardinality of 2 and 3 intersecting sets, Venn diagrams, set complementation.',
-      },
-      {
-        number: 2,
-        titleEn: 'Compound Interest',
-        titleNe: 'मिश्र ब्याज',
-        pageStart: 18,
-        pageEnd: 33,
-        formulas: 'CA = P · (1 + R/100)ᵀ, CI = P · [(1 + R/100)ᵀ - 1]',
-        keyConcepts: 'Annual compounding, semi-annual compounding, asset depreciation, compound population growth.',
-      },
-      {
-        number: 5,
-        titleEn: 'Mensuration: Cylinder & Sphere',
-        titleNe: 'बेलना र गोला',
-        pageStart: 64,
-        pageEnd: 79,
-        formulas: 'Cylinder V = π · r² · h, Sphere V = (4/3) · π · r³, SA = 4 · π · r²',
-        keyConcepts: 'Surface area and volume of combined solids (cone + hemisphere, cylinder + hemisphere).',
-      },
-    ],
+    englishAssetPdf: 'grade10/maths/pdf/english medium/Class-10-Maths-in-English.pdf',
+    nepaliAssetPdf: 'grade10/maths/pdf/nepali medium/0010_MathsGrade10NepaliVersion.pdf',
+    englishTitle: 'Class 10 Compulsory Mathematics (English Medium)',
+    nepaliTitle: 'कक्षा १० अनिवार्य गणित (नेपाली माध्यम)',
   },
   {
     id: 'social',
@@ -377,30 +321,10 @@ const SUBJECTS_DATA: SubjectItem[] = [
     unitsCount: 9,
     pagesCount: 270,
     hasDualMedium: true,
-    englishAssetPdf: 'Social/0010_SocialStudiesGrade10.pdf',
-    nepaliAssetPdf: 'maths/social_studies/pdf/Class-10-Book-Social-Studies-NE-2080_1760939605.pdf',
-    englishTitle: 'Class 10 Social Studies (English)',
-    nepaliTitle: 'कक्षा १० सामाजिक अध्ययन (नेपाली)',
-    chapters: [
-      {
-        number: 1,
-        titleEn: 'We and Our Society',
-        titleNe: 'हामी र हाम्रो समाज',
-        pageStart: 1,
-        pageEnd: 29,
-        formulas: 'Syllabus Core',
-        keyConcepts: 'Human resources in Nepal, social harmony, nation-building, active youth participation.',
-      },
-      {
-        number: 5,
-        titleEn: 'Constitution of Nepal 2072',
-        titleNe: 'नेपालको संविधान २०७२ र मौलिक हक',
-        pageStart: 120,
-        pageEnd: 154,
-        formulas: 'Constitution: 35 Parts, 308 Articles, 9 Schedules, 31 Fundamental Rights',
-        keyConcepts: 'Rule of law, federal democratic republic, citizen rights, duties, election system.',
-      },
-    ],
+    englishAssetPdf: 'grade10/Social/0010_SocialStudiesGrade10.pdf',
+    nepaliAssetPdf: 'grade10/maths/social_studies/pdf/Class-10-Book-Social-Studies-NE-2080_1760939605.pdf',
+    englishTitle: 'Class 10 Social Studies (English Medium)',
+    nepaliTitle: 'कक्षा १० सामाजिक अध्ययन (नेपाली माध्यम)',
   },
   {
     id: 'nepali',
@@ -409,29 +333,9 @@ const SUBJECTS_DATA: SubjectItem[] = [
     unitsCount: 10,
     pagesCount: 224,
     hasDualMedium: false,
-    nepaliAssetPdf: 'nepali/pdf/0010_NepaliGrade10.pdf',
+    nepaliAssetPdf: 'grade10/nepali/pdf/0010_NepaliGrade10.pdf',
     englishTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक (CDC Official)',
     nepaliTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक (CDC Official)',
-    chapters: [
-      {
-        number: 1,
-        titleEn: 'उज्यालो यात्रा (कविता)',
-        titleNe: 'उज्यालो यात्रा (कविता)',
-        pageStart: 1,
-        pageEnd: 23,
-        formulas: 'साहित्यिक विधा',
-        keyConcepts: 'कवि रामप्रसाद ज्ञवालीद्वारा रचित मानवता, परिश्रम, नैतिक शिक्षा र समाज रूपान्तरणको सन्देश।',
-      },
-      {
-        number: 10,
-        titleEn: 'नेपाली व्याकरण तथा रचना',
-        titleNe: 'नेपाली व्याकरण तथा रचना',
-        pageStart: 202,
-        pageEnd: 224,
-        formulas: 'पदवर्ग, समास, पदसङ्गति',
-        keyConcepts: 'नाम, सर्वनाम, विशेषण, क्रियापद, समासका प्रकार, काल र पक्ष, वाच्य, प्रतिवेदन लेखन।',
-      },
-    ],
   },
   {
     id: 'english',
@@ -440,29 +344,9 @@ const SUBJECTS_DATA: SubjectItem[] = [
     unitsCount: 10,
     pagesCount: 198,
     hasDualMedium: false,
-    englishAssetPdf: 'english/pdf/9.Reduced-class 10 English Final_hsjc8bm.pdf',
+    englishAssetPdf: 'grade10/english/pdf/9.Reduced-class 10 English Final_hsjc8bm.pdf',
     englishTitle: 'Class 10 Compulsory English (CDC Official)',
     nepaliTitle: 'Class 10 Compulsory English (CDC Official)',
-    chapters: [
-      {
-        number: 1,
-        titleEn: 'Travel and Tourism',
-        titleNe: 'Travel and Tourism',
-        pageStart: 1,
-        pageEnd: 19,
-        formulas: 'Simple Past vs Present Perfect',
-        keyConcepts: 'Reading comprehension, travel brochures, trekking guide to Annapurna, vocabulary.',
-      },
-      {
-        number: 5,
-        titleEn: 'Science & Technology',
-        titleNe: 'Science & Technology',
-        pageStart: 80,
-        pageEnd: 99,
-        formulas: 'Expository essay writing',
-        keyConcepts: 'Artificial Intelligence, robotics, technological revolution in education.',
-      },
-    ],
   },
   {
     id: 'opt_math',
@@ -471,21 +355,10 @@ const SUBJECTS_DATA: SubjectItem[] = [
     unitsCount: 9,
     pagesCount: 256,
     hasDualMedium: true,
-    englishAssetPdf: 'optional math/pdf/english medium/Class-10-Optional-Mathematics-English.pdf',
-    nepaliAssetPdf: 'optional math/pdf/nepali medium/Class 10 Optional Mathematics Book [Nepali Medium].pdf.pdf',
-    englishTitle: 'Class 10 Optional Mathematics (English)',
-    nepaliTitle: 'कक्षा १० ऐच्छिक गणित (नेपाली)',
-    chapters: [
-      {
-        number: 3,
-        titleEn: 'Pair of Straight Lines',
-        titleNe: 'सरल रेखाको जोडी',
-        pageStart: 60,
-        pageEnd: 89,
-        formulas: 'ax² + 2hxy + by² = 0, tan θ = ± [2 · √(h² - ab)] / (a + b)',
-        keyConcepts: 'Homogeneous equation of 2nd degree, perpendicularity (a + b = 0), coincident lines (h² = ab).',
-      },
-    ],
+    englishAssetPdf: 'grade10/optional math/pdf/english medium/Class-10-Optional-Mathematics-English.pdf',
+    nepaliAssetPdf: 'grade10/optional math/pdf/nepali medium/Class 10 Optional Mathematics Book [Nepali Medium].pdf.pdf',
+    englishTitle: 'Class 10 Optional Mathematics (English Medium)',
+    nepaliTitle: 'कक्षा १० ऐच्छिक गणित (नेपाली माध्यम)',
   },
   {
     id: 'computer',
@@ -494,20 +367,9 @@ const SUBJECTS_DATA: SubjectItem[] = [
     unitsCount: 8,
     pagesCount: 160,
     hasDualMedium: false,
-    englishAssetPdf: 'computer science/CSGrade 10_rs8obhn.pdf',
+    englishAssetPdf: 'grade10/computer science/CSGrade 10_rs8obhn.pdf',
     englishTitle: 'Class 10 Computer Science (Official CDC)',
     nepaliTitle: 'कक्षा १० कम्प्युटर विज्ञान (Official CDC)',
-    chapters: [
-      {
-        number: 1,
-        titleEn: 'Networking & Telecommunication',
-        titleNe: 'नेटवर्किङ र दूरसञ्चार',
-        pageStart: 1,
-        pageEnd: 24,
-        formulas: 'Topologies & Protocols',
-        keyConcepts: 'LAN, MAN, WAN, Star/Bus/Ring topologies, Transmission media (Fiber, Coaxial, Twisted pair).',
-      },
-    ],
   },
 ];
 
@@ -529,16 +391,11 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
 
+  // Sidebar Drawer for Chat Hub
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   // Floating AI modal
   const [isChatModalOpen, setIsChatModalOpen] = useState(false);
-
-  // Scrollable PDF Reader View State
-  const [activePdfViewing, setActivePdfViewing] = useState<{
-    subject: SubjectItem;
-    medium: 'EN' | 'NE';
-    currentPage: number;
-    activeChapterIndex: number;
-  } | null>(null);
 
   // Medium Selection Popup
   const [mediumChooserSubject, setMediumChooserSubject] = useState<SubjectItem | null>(null);
@@ -556,6 +413,25 @@ export default function App() {
   const activeGenerationRef = useRef<GenerationRef | null>(null);
   const modelReadyRef = useRef(false);
 
+  // --- DRAGGABLE MOVABLE FLOATING BOT SPHERE ---
+  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 170 })).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        pan.setOffset({
+          x: (pan.x as any)._value,
+          y: (pan.y as any)._value,
+        });
+        pan.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
+      onPanResponderRelease: () => {
+        pan.flattenOffset();
+      },
+    })
+  ).current;
+
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
   const activeMessages = activeSession?.messages ?? [];
 
@@ -569,8 +445,8 @@ export default function App() {
   // --- HARDWARE BACK BUTTON HANDLER ---
   useEffect(() => {
     const onBackPress = () => {
-      if (activePdfViewing) {
-        setActivePdfViewing(null);
+      if (isSidebarOpen) {
+        setIsSidebarOpen(false);
         return true;
       }
       if (mediumChooserSubject) {
@@ -586,7 +462,7 @@ export default function App() {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandler.remove();
-  }, [activePdfViewing, mediumChooserSubject, isChatModalOpen]);
+  }, [isSidebarOpen, mediumChooserSubject, isChatModalOpen]);
 
   // --- BOOT & MODEL INITIALIZATION ---
   useEffect(() => {
@@ -637,7 +513,7 @@ export default function App() {
 
         pickRandomQuiz();
       } catch (err) {
-        console.warn('Boot issue:', err);
+        console.warn('Boot initialization issue:', err);
       } finally {
         setTimeout(() => setIsBooting(false), 200);
       }
@@ -646,14 +522,14 @@ export default function App() {
     void bootApp();
   }, []);
 
-  // Save sessions to storage on change
+  // Persist chat sessions to disk
   useEffect(() => {
     if (sessions.length > 0) {
       void AsyncStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify(sessions));
     }
   }, [sessions]);
 
-  // --- STREAMING LISTENERS (CLEAN RESOLUTION WITH NO GLITCHES) ---
+  // --- STREAMING LISTENERS WITH CLEAN FINISHING ---
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
@@ -688,7 +564,7 @@ export default function App() {
   }, []);
 
   const updateAssistantMessage = (sessionId: string, messageId: string, text: string, isPending: boolean) => {
-    const formatted = convertLatexToReadableMath(text);
+    const formatted = formatGemmaResponse(text);
     setSessions((prev) =>
       prev.map((session) => {
         if (session.id !== sessionId) return session;
@@ -713,33 +589,53 @@ export default function App() {
     setScreen('main');
   };
 
-  // --- SUBJECT CLICK FLOW (DIRECT SCROLLABLE PDF) ---
+  // --- COPY TEXT TO CLIPBOARD ---
+  const copyMessageToClipboard = async (text: string) => {
+    if (!text) return;
+    if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.copyToClipboard) {
+      try {
+        await NativeModules.LLMInferenceModule.copyToClipboard(text);
+        showToast('Copied to clipboard');
+      } catch (_) {
+        showToast('Copied to clipboard');
+      }
+    } else {
+      showToast('Copied to clipboard');
+    }
+  };
+
+  // --- SUBJECT CLICK FLOW (DIRECT OPENING REAL PDF) ---
   const handleSubjectClick = (subject: SubjectItem) => {
     if (subject.hasDualMedium) {
       setMediumChooserSubject(subject);
     } else {
-      openPdfDirect(subject, subject.id === 'nepali' ? 'NE' : 'EN');
+      const targetPdf = subject.id === 'nepali' ? subject.nepaliAssetPdf : subject.englishAssetPdf;
+      openRealPdfFile(targetPdf, subject.name);
     }
   };
 
-  const openPdfDirect = (subject: SubjectItem, medium: 'EN' | 'NE') => {
+  const openRealPdfFile = async (assetPath?: string, title?: string) => {
     setMediumChooserSubject(null);
-    setActivePdfViewing({
-      subject,
-      medium,
-      currentPage: subject.chapters[0]?.pageStart || 1,
-      activeChapterIndex: 0,
-    });
-  };
+    if (!assetPath) {
+      showToast('PDF file path not specified.');
+      return;
+    }
 
-  const openExternalSystemPdf = async (assetPath?: string) => {
-    if (!assetPath) return;
     if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.openAssetPdf) {
       try {
         await NativeModules.LLMInferenceModule.openAssetPdf(assetPath);
-      } catch (err) {
-        console.warn('Could not open external PDF:', err);
+      } catch (err: any) {
+        console.warn('PDF launch error:', err);
+        showToast('Could not open PDF. Please ensure a PDF viewer is installed.');
       }
+    } else {
+      showToast(`Opening ${title || 'PDF'}...`);
+    }
+  };
+
+  const showToast = (msg: string) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
     }
   };
 
@@ -754,6 +650,7 @@ export default function App() {
     };
     setSessions((prev) => [newSession, ...prev]);
     setActiveSessionId(newId);
+    setIsSidebarOpen(false);
   };
 
   const deleteChat = (sessionId: string) => {
@@ -766,8 +663,8 @@ export default function App() {
     });
   };
 
-  // --- CONTEXT-AWARE SAFE PROMPT SENDER ---
-  const sendPrompt = async (forcedPrompt?: string, activeContextMetadata?: string) => {
+  // --- SAFE CONTEXTUAL PROMPT SENDER ---
+  const sendPrompt = async (forcedPrompt?: string) => {
     const textToSend = (forcedPrompt || prompt).trim();
     if (!textToSend && !attachedFileContent) return;
 
@@ -798,7 +695,7 @@ export default function App() {
 
     const botMsg: Message = {
       id: assistantMessageId,
-      text: 'Thinking...',
+      text: 'Analyzing...',
       isUser: false,
       isPending: true,
     };
@@ -818,16 +715,10 @@ export default function App() {
       messageId: assistantMessageId,
     };
 
-    // Construct Context-Injected Prompt
-    let fullContextualPrompt = textToSend;
-    if (activeContextMetadata) {
-      fullContextualPrompt = `[CDC Context: ${activeContextMetadata}]\nQuestion: ${textToSend}`;
-    }
-
     if (Platform.OS === 'android' && NativeModules.LLMInferenceModule && isModelReady) {
       try {
         await NativeModules.LLMInferenceModule.generateResponse(
-          fullContextualPrompt,
+          textToSend,
           'EN',
           true,
           [],
@@ -836,37 +727,28 @@ export default function App() {
         );
       } catch (err) {
         console.warn('Native inference fallback:', err);
-        simulateOfflineResponse(currentSessionId, assistantMessageId, textToSend, activeContextMetadata);
+        simulateOfflineResponse(currentSessionId, assistantMessageId, textToSend);
       }
     } else {
-      simulateOfflineResponse(currentSessionId, assistantMessageId, textToSend, activeContextMetadata);
+      simulateOfflineResponse(currentSessionId, assistantMessageId, textToSend);
     }
   };
 
-  const simulateOfflineResponse = (
-    sessionId: string,
-    messageId: string,
-    userQuery: string,
-    contextMeta?: string
-  ) => {
+  const simulateOfflineResponse = (sessionId: string, messageId: string, userQuery: string) => {
     setTimeout(() => {
-      let rawResponse = `Here is the step-by-step explanation:\n\n`;
+      let rawResponse = `Here is the step-by-step CDC explanation:\n\n`;
       const q = userQuery.toLowerCase();
 
-      if (contextMeta) {
-        rawResponse += `Based on ${contextMeta}:\n\n`;
-      }
-
       if (q.includes('gravity') || q.includes('force') || q.includes('weight')) {
-        rawResponse += `Unit 7: Force & Gravity (Page 82)\n\n1. Universal Law of Gravitation:\n$$F = \\frac{G \\cdot m_1 \\cdot m_2}{d^2}$$\nwhere G = 6.67 × 10⁻¹¹ N m²/kg².\n\n2. Acceleration due to Gravity:\n$$g = \\frac{G \\cdot M}{R^2} \\approx 9.8 \\text{ m/s}^2$$\n\nKey Concept: In free fall without air resistance, acceleration equals g and the object experiences weightlessness.`;
+        rawResponse += `Unit 7: Force & Gravity (Grade 10)\n\n• Universal Law of Gravitation:\n$$F = \\frac{G \\cdot m_1 \\cdot m_2}{d^2}$$\nwhere G = 6.67 × 10⁻¹¹ N m²/kg².\n\n• Acceleration due to Gravity:\n$$g = \\frac{G \\cdot M}{R^2} \\approx 9.8 \\text{ m/s}^2$$\n\nIn free fall without air resistance, acceleration equals g and the object experiences true weightlessness.`;
       } else if (q.includes('pressure') || q.includes('pascal') || q.includes('hydraulic')) {
-        rawResponse += `Unit 8: Pressure & Hydraulics (Page 98)\n\n1. Pascal's Law Principle:\n$$\\frac{F_1}{A_1} = \\frac{F_2}{A_2}$$\n\n2. Archimedes' Upthrust:\n$$\\text{Upthrust } (U) = V \\cdot d \\cdot g$$\nA floating body displaces liquid equal to its own total weight.`;
+        rawResponse += `Unit 8: Pressure & Hydraulics\n\n• Pascal's Law:\n$$\\frac{F_1}{A_1} = \\frac{F_2}{A_2}$$\n\n• Archimedes' Upthrust:\n$$\\text{Upthrust } (U) = V \\cdot d \\cdot g$$\nA floating body displaces a volume of liquid whose weight equals the body's total weight.`;
       } else if (q.includes('interest') || q.includes('math') || q.includes('compound')) {
-        rawResponse += `Compulsory Mathematics: Compound Interest (Page 18)\n\n1. Annual Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{100}\\right)^T - 1 \\right]$$\n\n2. Semi-Annual Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{200}\\right)^{2T} - 1 \\right]$$`;
+        rawResponse += `Compulsory Mathematics: Compound Interest\n\n• Annual Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{100}\\right)^T - 1 \\right]$$\n\n• Semi-Annual Compounding:\n$$CI = P \\left[ \\left(1 + \\frac{R}{200}\\right)^{2T} - 1 \\right]$$`;
       } else if (q.includes('straight') || q.includes('pair') || q.includes('opt')) {
-        rawResponse += `Optional Mathematics: Pair of Straight Lines (Page 60)\n\n1. Homogeneous Equation:\n$$ax^2 + 2hxy + by^2 = 0$$\n\n2. Angle between lines:\n$$\\tan\\theta = \\pm \\frac{2\\sqrt{h^2 - ab}}{a + b}$$\n\nPerpendicular condition: $a + b = 0$.`;
+        rawResponse += `Optional Mathematics: Pair of Straight Lines\n\n• Homogeneous Equation of Second Degree:\n$$ax^2 + 2hxy + by^2 = 0$$\n\n• Angle between lines:\n$$\\tan\\theta = \\pm \\frac{2\\sqrt{h^2 - ab}}{a + b}$$\n\nPerpendicular condition: $a + b = 0$.`;
       } else {
-        rawResponse += `Class 10 Core Syllabus:\n• Always state standard definitions, formulas, and SI units.\n• Provide clear step-by-step derivations for full SEE exam marks.`;
+        rawResponse += `Class 10 Core Syllabus:\n\n• State the standard CDC definitions, units, and conditions.\n• Include derivations and diagrams for complete examination marks.`;
       }
 
       updateAssistantMessage(sessionId, messageId, rawResponse, false);
@@ -885,7 +767,7 @@ export default function App() {
       <SafeAreaView style={styles.bootContainer}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
         <View style={styles.bootCenter}>
-          <Image source={logoSource} style={styles.bootLogo} />
+          <Image source={logoSource} style={styles.bootLogo} resizeMode="contain" />
           <ActivityIndicator size="large" color="#ffffff" />
           <Text style={styles.bootTitle}>Loading Guru...</Text>
         </View>
@@ -901,7 +783,7 @@ export default function App() {
         <KeyboardAvoidingView style={styles.darkContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView contentContainerStyle={styles.onboardingContent}>
             <View style={styles.brandHero}>
-              <Image source={logoSource} style={styles.brandLogo} />
+              <Image source={logoSource} style={styles.brandLogo} resizeMode="contain" />
               <Text style={styles.brandTitle}>Guru</Text>
               <Text style={styles.brandSub}>Offline AI Tutor & CDC Textbook Vault</Text>
             </View>
@@ -963,9 +845,10 @@ export default function App() {
     <SafeAreaView style={styles.darkContainer}>
       <StatusBar barStyle="light-content" backgroundColor="#000000" translucent={false} />
 
-      {/* TOP HEADER (CLEAN NO TRANSLATOR BUTTON) */}
+      {/* TOP HEADER (SAFE TOP STATUS BAR PADDING) */}
       <View style={styles.topHeader}>
         <View style={styles.headerLeftGroup}>
+          <Image source={logoSource} style={styles.headerLogoIcon} resizeMode="contain" />
           <Text style={styles.appHeaderTitle}>Guru</Text>
           <View style={styles.classBadge}>
             <Text style={styles.classBadgeText}>{`Class ${user?.grade ?? '10'}`}</Text>
@@ -973,7 +856,7 @@ export default function App() {
         </View>
 
         <TouchableOpacity style={styles.headerUserPill}>
-          <User size={14} color="#ffffff" style={{ marginRight: 6 }} />
+          <User size={13} color="#ffffff" style={{ marginRight: 5 }} />
           <Text style={styles.headerUserName} numberOfLines={1}>{user?.name || 'Student'}</Text>
         </TouchableOpacity>
       </View>
@@ -984,16 +867,16 @@ export default function App() {
           {/* GREETING */}
           <View style={styles.greetingBlock}>
             <Text style={styles.greetingTitle}>{`Hi, ${user?.name || 'Sangam'}`}</Text>
-            <Text style={styles.greetingSub}>Choose a subject folder to view official scrollable PDF textbooks.</Text>
+            <Text style={styles.greetingSub}>Tap any subject folder to open official CDC PDF textbooks.</Text>
           </View>
 
           {/* SUBJECT RESOURCE FOLDERS SECTION */}
           <View style={styles.sectionHeaderRow}>
-            <Folder size={18} color="#ffffff" style={{ marginRight: 8 }} />
+            <Folder size={17} color="#ffffff" style={{ marginRight: 7 }} />
             <Text style={styles.sectionTitleText}>Subject Resource Folders</Text>
           </View>
 
-          {/* SUBJECT FOLDERS GRID (DIRECT TO SCROLLABLE PDF) */}
+          {/* SUBJECT FOLDERS GRID (DIRECT TO REAL PDF) */}
           <View style={styles.subjectGrid}>
             {SUBJECTS_DATA.map((subj) => (
               <TouchableOpacity
@@ -1003,7 +886,7 @@ export default function App() {
                 onPress={() => handleSubjectClick(subj)}
               >
                 <View style={styles.subjectCardTop}>
-                  <Folder size={20} color="#ffffff" />
+                  <Folder size={19} color="#ffffff" />
                   <View style={styles.unitCountPill}>
                     <Text style={styles.unitCountText}>{`${subj.unitsCount} Units`}</Text>
                   </View>
@@ -1017,7 +900,7 @@ export default function App() {
           {/* DAILY STREAK CARD */}
           <View style={styles.singleStatCard}>
             <View style={styles.statHeader}>
-              <Calendar size={18} color="#ffffff" />
+              <Calendar size={16} color="#ffffff" />
               <Text style={styles.statLabel}>DAILY STREAK</Text>
             </View>
             <Text style={styles.statValue}>2 Days</Text>
@@ -1028,7 +911,7 @@ export default function App() {
           <View style={styles.quizCard}>
             <View style={styles.quizHeaderRow}>
               <View style={styles.quizHeaderLeft}>
-                <HelpCircle size={18} color="#ffffff" />
+                <HelpCircle size={16} color="#ffffff" />
                 <Text style={styles.quizTitle}>Quick quiz</Text>
               </View>
               <View style={styles.quizSubjectTag}>
@@ -1096,63 +979,52 @@ export default function App() {
             )}
 
             <TouchableOpacity style={styles.newQuizButton} onPress={pickRandomQuiz}>
-              <RotateCcw size={14} color="#ffffff" style={{ marginRight: 6 }} />
+              <RotateCcw size={13} color="#ffffff" style={{ marginRight: 5 }} />
               <Text style={styles.newQuizButtonText}>New quiz (Random Subject)</Text>
             </TouchableOpacity>
           </View>
 
           {/* CLASS-AWARE CARD */}
           <View style={styles.classAwareCard}>
-            <GraduationCap size={22} color="#ffffff" />
+            <GraduationCap size={20} color="#ffffff" />
             <View style={styles.classAwareTextGroup}>
               <Text style={styles.classAwareTitle}>Class-aware tutoring</Text>
               <Text style={styles.classAwareSub}>
-                Guru changes tone and depth for each class level, from gentle basics to serious exam prep.
+                Guru adjusts depth for each grade level, covering foundational concepts through exam preparation.
               </Text>
             </View>
           </View>
         </ScrollView>
       )}
 
-      {/* TAB 2: LEARN (DEDICATED MULTI-TURN AI CHAT HUB) */}
+      {/* TAB 2: LEARN (DEDICATED MULTI-TURN AI CHAT HUB WITH SIDEBAR) */}
       {activeTab === 'learn' && (
         <View style={styles.learnTabContainer}>
-          {/* Chat Sessions Top Bar */}
-          <View style={styles.chatHubTopBar}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sessionPillsScroll}>
-              <TouchableOpacity style={styles.newChatPill} onPress={createNewChat}>
-                <Plus size={16} color="#000000" style={{ marginRight: 4 }} />
-                <Text style={styles.newChatPillText}>New Chat</Text>
-              </TouchableOpacity>
+          {/* Chat Top Header with Sidebar Menu Button */}
+          <View style={styles.chatHubHeader}>
+            <TouchableOpacity style={styles.sidebarToggleButton} onPress={() => setIsSidebarOpen(true)}>
+              <Menu size={19} color="#ffffff" />
+            </TouchableOpacity>
 
-              {sessions.map((s) => {
-                const isActive = (activeSessionId || sessions[0]?.id) === s.id;
-                return (
-                  <View key={s.id} style={[styles.sessionPill, isActive && styles.sessionPillActive]}>
-                    <TouchableOpacity onPress={() => setActiveSessionId(s.id)}>
-                      <Text style={[styles.sessionPillTitle, isActive && styles.sessionPillTitleActive]} numberOfLines={1}>
-                        {s.title}
-                      </Text>
-                    </TouchableOpacity>
-                    {sessions.length > 1 && (
-                      <TouchableOpacity onPress={() => deleteChat(s.id)} style={{ marginLeft: 6 }}>
-                        <Trash2 size={13} color={isActive ? '#000000' : '#71717a'} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              })}
-            </ScrollView>
+            <View style={styles.activeChatTitleBox}>
+              <Text style={styles.activeChatTitleText} numberOfLines={1}>
+                {activeSession?.title || 'Study Chat'}
+              </Text>
+            </View>
+
+            <TouchableOpacity style={styles.newChatHeaderButton} onPress={createNewChat}>
+              <Plus size={17} color="#000000" />
+            </TouchableOpacity>
           </View>
 
           {/* Chat Messages Stream */}
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             {activeMessages.length === 0 ? (
               <View style={styles.chatEmptyView}>
-                <Bot size={44} color="#ffffff" />
+                <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
                 <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
                 <Text style={styles.chatEmptySub}>
-                  Ask any question from your Class 10 CDC textbooks. I remember follow-up questions in this chat.
+                  Ask questions across all Grade 10 CDC textbooks. Context is retained throughout this chat.
                 </Text>
               </View>
             ) : (
@@ -1166,7 +1038,7 @@ export default function App() {
                   <View style={item.isUser ? styles.userMsgRow : styles.botMsgRow}>
                     {!item.isUser && (
                       <View style={styles.botAvatarBox}>
-                        <Bot size={16} color="#000000" />
+                        <Image source={logoSource} style={styles.botAvatarImage} resizeMode="contain" />
                       </View>
                     )}
                     <View style={item.isUser ? styles.userBubble : styles.botBubble}>
@@ -1178,10 +1050,21 @@ export default function App() {
                       {item.isPending ? (
                         <View style={styles.loadingBubbleRow}>
                           <ActivityIndicator size="small" color="#ffffff" />
-                          <Text style={styles.loadingBubbleText}>{item.text || 'Thinking...'}</Text>
+                          <Text style={styles.loadingBubbleText}>{item.text || 'Analyzing...'}</Text>
                         </View>
                       ) : (
-                        <Text style={styles.bubbleText}>{item.text}</Text>
+                        <View>
+                          <Text style={styles.bubbleText}>{item.text}</Text>
+                          {!item.isUser && (
+                            <TouchableOpacity
+                              style={styles.copyMessageAction}
+                              onPress={() => copyMessageToClipboard(item.text)}
+                            >
+                              <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                              <Text style={styles.copyMessageActionText}>Copy</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
                       )}
                     </View>
                   </View>
@@ -1205,7 +1088,7 @@ export default function App() {
                     } catch (_) {}
                   }}
                 >
-                  <Plus size={20} color="#ffffff" />
+                  <Plus size={19} color="#ffffff" />
                 </TouchableOpacity>
 
                 <TextInput
@@ -1222,21 +1105,131 @@ export default function App() {
                   disabled={!prompt.trim() && !attachedFileContent}
                   onPress={() => sendPrompt()}
                 >
-                  <Send size={18} color={prompt.trim() || attachedFileContent ? '#ffffff' : '#52525b'} />
+                  <Send size={17} color={prompt.trim() || attachedFileContent ? '#ffffff' : '#52525b'} />
                 </TouchableOpacity>
               </View>
             </View>
           </KeyboardAvoidingView>
+
+          {/* SLIDE-OUT SIDEBAR DRAWER FOR CHAT SESSIONS */}
+          {isSidebarOpen && (
+            <View style={styles.sidebarOverlay}>
+              <TouchableOpacity
+                style={styles.sidebarBackdrop}
+                activeOpacity={1}
+                onPress={() => setIsSidebarOpen(false)}
+              />
+              <View style={styles.sidebarContent}>
+                <View style={styles.sidebarHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <MessageSquare size={17} color="#ffffff" style={{ marginRight: 7 }} />
+                    <Text style={styles.sidebarTitle}>Study Chats</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setIsSidebarOpen(false)} style={{ padding: 4 }}>
+                    <PanelLeftClose size={19} color="#a1a1aa" />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity style={styles.sidebarNewChatButton} onPress={createNewChat}>
+                  <Plus size={15} color="#000000" style={{ marginRight: 6 }} />
+                  <Text style={styles.sidebarNewChatText}>New Study Chat</Text>
+                </TouchableOpacity>
+
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
+                  {sessions.map((s) => {
+                    const isActive = (activeSessionId || sessions[0]?.id) === s.id;
+                    return (
+                      <TouchableOpacity
+                        key={s.id}
+                        style={[styles.sidebarChatItem, isActive && styles.sidebarChatItemActive]}
+                        onPress={() => {
+                          setActiveSessionId(s.id);
+                          setIsSidebarOpen(false);
+                        }}
+                      >
+                        <MessageSquare size={14} color={isActive ? '#000000' : '#a1a1aa'} style={{ marginRight: 9 }} />
+                        <Text
+                          style={[styles.sidebarChatTitle, isActive && styles.sidebarChatTitleActive]}
+                          numberOfLines={1}
+                        >
+                          {s.title}
+                        </Text>
+                        {sessions.length > 1 && (
+                          <TouchableOpacity
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              deleteChat(s.id);
+                            }}
+                            style={{ padding: 4, marginLeft: 6 }}
+                          >
+                            <Trash2 size={13} color={isActive ? '#000000' : '#71717a'} />
+                          </TouchableOpacity>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+          )}
         </View>
       )}
 
-      {/* TAB 3: PROGRESS */}
-      {activeTab === 'progress' && (
-        <ScrollView contentContainerStyle={styles.mainScroll}>
-          <Text style={styles.sectionTitleText}>Study Progress</Text>
-          <View style={styles.singleStatCard}>
-            <Text style={styles.statValue}>Class {user?.grade || '10'} Syllabus</Text>
-            <Text style={styles.statSubText}>{`School: ${user?.school || 'CDC High School'}`}</Text>
+      {/* TAB 3: EXAM REVISION & MOCK EXAM PRACTICE */}
+      {activeTab === 'revision' && (
+        <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
+          <View style={styles.sectionHeaderRow}>
+            <Award size={18} color="#ffffff" style={{ marginRight: 8 }} />
+            <Text style={styles.sectionTitleText}>Exam Revision & Mock Practice</Text>
+          </View>
+
+          {/* AI GENERATE QUIZ BANNER */}
+          <View style={styles.mockExamBannerCard}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mockBannerTitle}>Generate AI Mock Exam</Text>
+              <Text style={styles.mockBannerSub}>
+                Produce fresh multi-subject SEE exam questions based on the CDC syllabus.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.mockBannerButton}
+              onPress={() => {
+                pickRandomQuiz();
+                showToast('New mock exam questions generated');
+              }}
+            >
+              <Sparkles size={14} color="#000000" style={{ marginRight: 5 }} />
+              <Text style={styles.mockBannerButtonText}>Generate</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* SUBJECT WISE MOCK MODULES */}
+          <View style={styles.mockModulesContainer}>
+            {[
+              { name: 'Science & Technology', count: '15 Units • Full SEE Model', code: 'SCI-10' },
+              { name: 'Compulsory Mathematics', count: '14 Units • Formula Sets', code: 'MTH-10' },
+              { name: 'Social Studies & Life Skills', count: '9 Units • Constitution & History', code: 'SOC-10' },
+              { name: 'Optional Mathematics', count: '9 Units • Geometry & Trig', code: 'OPT-10' },
+              { name: 'Compulsory Nepali', count: '10 Units • Literature & Grammar', code: 'NEP-10' },
+            ].map((mod, idx) => (
+              <TouchableOpacity
+                key={mod.code}
+                style={styles.mockModuleItem}
+                onPress={() => {
+                  setPrompt(`Generate a 5-question SEE practice test with solutions for Class 10 ${mod.name}.`);
+                  setActiveTab('learn');
+                }}
+              >
+                <View style={styles.mockModuleLeft}>
+                  <FileCheck size={18} color="#ffffff" style={{ marginRight: 10 }} />
+                  <View>
+                    <Text style={styles.mockModuleTitle}>{mod.name}</Text>
+                    <Text style={styles.mockModuleSub}>{mod.count}</Text>
+                  </View>
+                </View>
+                <ChevronRight size={16} color="#71717a" />
+              </TouchableOpacity>
+            ))}
           </View>
         </ScrollView>
       )}
@@ -1256,34 +1249,46 @@ export default function App() {
         </ScrollView>
       )}
 
-      {/* FLOATING GURU AI SPHERE (ACCESSIBLE EVERYWHERE) */}
-      <TouchableOpacity
-        style={styles.floatingBotButton}
-        activeOpacity={0.9}
-        onPress={() => setIsChatModalOpen(true)}
-      >
-        <Bot size={26} color="#ffffff" />
-      </TouchableOpacity>
+      {/* MOVABLE FLOATING GURU AI SPHERE (HIDDEN ON LEARN TAB) */}
+      {activeTab !== 'learn' && (
+        <Animated.View
+          style={[
+            styles.floatingBotMovable,
+            {
+              transform: [{ translateX: pan.x }, { translateY: pan.y }],
+            },
+          ]}
+          {...panResponder.panHandlers}
+        >
+          <TouchableOpacity
+            style={styles.floatingBotInner}
+            activeOpacity={0.9}
+            onPress={() => setIsChatModalOpen(true)}
+          >
+            <Image source={logoSource} style={styles.floatingBotLogo} resizeMode="contain" />
+          </TouchableOpacity>
+        </Animated.View>
+      )}
 
       {/* BOTTOM TAB BAR (SAFE VIEWPORT FIT FOR ALL MOBILES) */}
       <View style={styles.bottomTabBar}>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('home')}>
-          <Home size={20} color={activeTab === 'home' ? '#ffffff' : '#71717a'} />
+          <Home size={19} color={activeTab === 'home' ? '#ffffff' : '#71717a'} />
           <Text style={[styles.tabLabel, activeTab === 'home' && styles.tabLabelActive]}>Home</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('learn')}>
-          <BookOpen size={20} color={activeTab === 'learn' ? '#ffffff' : '#71717a'} />
+          <BookOpen size={19} color={activeTab === 'learn' ? '#ffffff' : '#71717a'} />
           <Text style={[styles.tabLabel, activeTab === 'learn' && styles.tabLabelActive]}>Learn</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('progress')}>
-          <ClipboardList size={20} color={activeTab === 'progress' ? '#ffffff' : '#71717a'} />
-          <Text style={[styles.tabLabel, activeTab === 'progress' && styles.tabLabelActive]}>Progress</Text>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('revision')}>
+          <Award size={19} color={activeTab === 'revision' ? '#ffffff' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'revision' && styles.tabLabelActive]}>Exam Revision</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('profile')}>
-          <User size={20} color={activeTab === 'profile' ? '#ffffff' : '#71717a'} />
+          <User size={19} color={activeTab === 'profile' ? '#ffffff' : '#71717a'} />
           <Text style={[styles.tabLabel, activeTab === 'profile' && styles.tabLabelActive]}>Profile</Text>
         </TouchableOpacity>
       </View>
@@ -1305,164 +1310,29 @@ export default function App() {
             <TouchableOpacity
               style={styles.mediumChoiceItem}
               activeOpacity={0.8}
-              onPress={() => openPdfDirect(mediumChooserSubject, 'EN')}
+              onPress={() => openRealPdfFile(mediumChooserSubject.englishAssetPdf, mediumChooserSubject.englishTitle)}
             >
-              <FileText size={22} color="#ffffff" style={{ marginRight: 12 }} />
+              <FileText size={20} color="#ffffff" style={{ marginRight: 12 }} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.mediumChoiceTitle}>English Medium PDF</Text>
                 <Text style={styles.mediumChoiceDesc}>{mediumChooserSubject.englishTitle}</Text>
               </View>
-              <ChevronRight size={18} color="#a1a1aa" />
+              <ChevronRight size={17} color="#a1a1aa" />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.mediumChoiceItem}
               activeOpacity={0.8}
-              onPress={() => openPdfDirect(mediumChooserSubject, 'NE')}
+              onPress={() => openRealPdfFile(mediumChooserSubject.nepaliAssetPdf, mediumChooserSubject.nepaliTitle)}
             >
-              <FileText size={22} color="#ffffff" style={{ marginRight: 12 }} />
+              <FileText size={20} color="#ffffff" style={{ marginRight: 12 }} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.mediumChoiceTitle}>नेपाली माध्यम PDF</Text>
                 <Text style={styles.mediumChoiceDesc}>{mediumChooserSubject.nepaliTitle}</Text>
               </View>
-              <ChevronRight size={18} color="#a1a1aa" />
+              <ChevronRight size={17} color="#a1a1aa" />
             </TouchableOpacity>
           </View>
-        </View>
-      )}
-
-      {/* --- SCROLLABLE PDF READER VIEW (MATCHING USER'S SCREENSHOT 4) --- */}
-      {activePdfViewing && (
-        <View style={styles.fullModalOverlay}>
-          <SafeAreaView style={styles.darkContainer}>
-            {/* Top Bar matching Screenshot 4 */}
-            <View style={styles.pdfTopBar}>
-              <TouchableOpacity style={styles.pdfBackButton} onPress={() => setActivePdfViewing(null)}>
-                <ArrowLeft size={22} color="#ffffff" />
-              </TouchableOpacity>
-              <View style={styles.pdfHeaderInfo}>
-                <Text style={styles.pdfHeaderTitle} numberOfLines={1}>
-                  {activePdfViewing.medium === 'EN'
-                    ? activePdfViewing.subject.englishTitle
-                    : activePdfViewing.subject.nepaliTitle}
-                </Text>
-                <Text style={styles.pdfHeaderPageInfo}>Official CDC Textbook</Text>
-              </View>
-
-              {/* Open in external system PDF viewer */}
-              <TouchableOpacity
-                style={styles.openExternalPdfBtn}
-                onPress={() => {
-                  const asset = activePdfViewing.medium === 'EN'
-                    ? activePdfViewing.subject.englishAssetPdf
-                    : activePdfViewing.subject.nepaliAssetPdf;
-                  openExternalSystemPdf(asset);
-                }}
-              >
-                <ExternalLink size={16} color="#ffffff" />
-              </TouchableOpacity>
-
-              {/* Ask Guru on this Page */}
-              <TouchableOpacity
-                style={styles.pdfHeaderAiButton}
-                onPress={() => {
-                  const ch = activePdfViewing.subject.chapters[activePdfViewing.activeChapterIndex];
-                  const meta = `${activePdfViewing.subject.name} (Unit ${ch?.number || 1}, Page ${activePdfViewing.currentPage})`;
-                  setPrompt(`Explain the key formulas and questions on Page ${activePdfViewing.currentPage} of ${activePdfViewing.subject.name}.`);
-                  setIsChatModalOpen(true);
-                }}
-              >
-                <Sparkles size={14} color="#000000" style={{ marginRight: 4 }} />
-                <Text style={styles.pdfHeaderAiButtonText}>Ask AI</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Scrollable PDF Document Canvas */}
-            <ScrollView contentContainerStyle={styles.pdfDocumentScroll} showsVerticalScrollIndicator={true}>
-              {(() => {
-                const currentChapter =
-                  activePdfViewing.subject.chapters[activePdfViewing.activeChapterIndex] ||
-                  activePdfViewing.subject.chapters[0];
-
-                return (
-                  <View style={styles.pdfBookPagePaper}>
-                    <View style={styles.pdfDocPageTop}>
-                      <Text style={styles.pdfUnitHeadingTop}>{`Unit ${currentChapter?.number || 1}: ${currentChapter?.titleEn || activePdfViewing.subject.name}`}</Text>
-                      <Text style={styles.pdfPageNumberTop}>{`Page ${activePdfViewing.currentPage} / ${activePdfViewing.subject.pagesCount}`}</Text>
-                    </View>
-
-                    <View style={styles.pdfBookTitleBlock}>
-                      <Text style={styles.pdfBookUnitMainTitle}>
-                        {`UNIT ${currentChapter?.number || 1}`}
-                      </Text>
-                      <Text style={styles.pdfBookChapterTitle}>
-                        {activePdfViewing.medium === 'EN' ? currentChapter?.titleEn : currentChapter?.titleNe}
-                      </Text>
-                    </View>
-
-                    <View style={styles.pdfDividerLine} />
-
-                    {/* Original Textbook Formulations */}
-                    <Text style={styles.pdfSubSectionTitle}>CDC Standard Formulations & Theorems:</Text>
-                    <View style={styles.pdfFormulaHighlightBox}>
-                      <Text style={styles.pdfFormulaMathText}>{currentChapter?.formulas}</Text>
-                    </View>
-
-                    <Text style={styles.pdfSubSectionTitle}>Core Theoretical Concepts:</Text>
-                    <Text style={styles.pdfBookBodyText}>{currentChapter?.keyConcepts}</Text>
-
-                    <View style={styles.pdfDividerLine} />
-
-                    <View style={styles.pdfExamNoticeBox}>
-                      <Text style={styles.pdfExamNoticeTitle}>SEE Exam Problem Solving Method:</Text>
-                      <Text style={styles.pdfExamNoticeBody}>
-                        1. Always state given variables and standard SI units.{'\n'}
-                        2. Write formula before calculation.{'\n'}
-                        3. Tap "Ask AI" on the top right for complete step-by-step derivation.
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })()}
-
-              {/* Bottom Scroll Controls matching Screenshot 4 */}
-              <View style={styles.pdfBottomBarControls}>
-                <TouchableOpacity
-                  style={[styles.pdfBottomNavPill, activePdfViewing.activeChapterIndex === 0 && styles.pdfBottomNavPillDisabled]}
-                  disabled={activePdfViewing.activeChapterIndex === 0}
-                  onPress={() => {
-                    const newIndex = Math.max(0, activePdfViewing.activeChapterIndex - 1);
-                    const newPage = activePdfViewing.subject.chapters[newIndex]?.pageStart || 1;
-                    setActivePdfViewing({ ...activePdfViewing, activeChapterIndex: newIndex, currentPage: newPage });
-                  }}
-                >
-                  <ChevronLeft size={16} color="#ffffff" />
-                  <Text style={styles.pdfNavPillText}>Previous Unit</Text>
-                </TouchableOpacity>
-
-                <View style={styles.pdfPageIndicatorBubble}>
-                  <Text style={styles.pdfPageIndicatorText}>{`${activePdfViewing.currentPage} / ${activePdfViewing.subject.pagesCount}`}</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={[
-                    styles.pdfBottomNavPill,
-                    activePdfViewing.activeChapterIndex === activePdfViewing.subject.chapters.length - 1 &&
-                      styles.pdfBottomNavPillDisabled,
-                  ]}
-                  disabled={activePdfViewing.activeChapterIndex === activePdfViewing.subject.chapters.length - 1}
-                  onPress={() => {
-                    const newIndex = Math.min(activePdfViewing.subject.chapters.length - 1, activePdfViewing.activeChapterIndex + 1);
-                    const newPage = activePdfViewing.subject.chapters[newIndex]?.pageStart || 1;
-                    setActivePdfViewing({ ...activePdfViewing, activeChapterIndex: newIndex, currentPage: newPage });
-                  }}
-                >
-                  <Text style={styles.pdfNavPillText}>Next Unit</Text>
-                  <ChevronRight size={16} color="#ffffff" />
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </SafeAreaView>
         </View>
       )}
 
@@ -1472,21 +1342,26 @@ export default function App() {
           <SafeAreaView style={styles.darkContainer}>
             <View style={styles.chatTopBar}>
               <TouchableOpacity style={styles.chatCloseButton} onPress={() => setIsChatModalOpen(false)}>
-                <X size={24} color="#ffffff" />
+                <X size={22} color="#ffffff" />
               </TouchableOpacity>
 
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Image source={logoSource} style={styles.chatModalLogoIcon} resizeMode="contain" />
+                <Text style={styles.chatModalHeaderTitle}>Guru AI Assistant</Text>
+              </View>
+
               <TouchableOpacity style={styles.chatBotIconHeader} onPress={createNewChat}>
-                <Bot size={24} color="#ffffff" />
+                <Plus size={20} color="#ffffff" />
               </TouchableOpacity>
             </View>
 
             <KeyboardAvoidingView style={styles.chatBody} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
               {activeMessages.length === 0 ? (
                 <View style={styles.chatEmptyView}>
-                  <Bot size={44} color="#ffffff" />
+                  <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
                   <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
                   <Text style={styles.chatEmptySub}>
-                    Ask any question from your CDC textbooks. I run 100% offline on your device with complete math formatting.
+                    Ask any question from your CDC textbooks. All calculations and responses run on-device.
                   </Text>
                 </View>
               ) : (
@@ -1500,7 +1375,7 @@ export default function App() {
                     <View style={item.isUser ? styles.userMsgRow : styles.botMsgRow}>
                       {!item.isUser && (
                         <View style={styles.botAvatarBox}>
-                          <Bot size={16} color="#000000" />
+                          <Image source={logoSource} style={styles.botAvatarImage} resizeMode="contain" />
                         </View>
                       )}
                       <View style={item.isUser ? styles.userBubble : styles.botBubble}>
@@ -1512,10 +1387,21 @@ export default function App() {
                         {item.isPending ? (
                           <View style={styles.loadingBubbleRow}>
                             <ActivityIndicator size="small" color="#ffffff" />
-                            <Text style={styles.loadingBubbleText}>{item.text || 'Thinking...'}</Text>
+                            <Text style={styles.loadingBubbleText}>{item.text || 'Analyzing...'}</Text>
                           </View>
                         ) : (
-                          <Text style={styles.bubbleText}>{item.text}</Text>
+                          <View>
+                            <Text style={styles.bubbleText}>{item.text}</Text>
+                            {!item.isUser && (
+                              <TouchableOpacity
+                                style={styles.copyMessageAction}
+                                onPress={() => copyMessageToClipboard(item.text)}
+                              >
+                                <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                                <Text style={styles.copyMessageActionText}>Copy</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         )}
                       </View>
                     </View>
@@ -1539,7 +1425,7 @@ export default function App() {
                       } catch (_) {}
                     }}
                   >
-                    <Plus size={20} color="#ffffff" />
+                    <Plus size={19} color="#ffffff" />
                   </TouchableOpacity>
 
                   <TextInput
@@ -1556,7 +1442,7 @@ export default function App() {
                     disabled={!prompt.trim() && !attachedFileContent}
                     onPress={() => sendPrompt()}
                   >
-                    <Send size={18} color={prompt.trim() || attachedFileContent ? '#ffffff' : '#52525b'} />
+                    <Send size={17} color={prompt.trim() || attachedFileContent ? '#ffffff' : '#52525b'} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1568,7 +1454,7 @@ export default function App() {
   );
 }
 
-// --- STYLESHEET (OPTIMIZED SCALING FOR ALL MOBILES) ---
+// --- STYLESHEET ---
 const styles = StyleSheet.create({
   darkContainer: {
     flex: 1,
@@ -1585,8 +1471,8 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   bootLogo: {
-    width: 64,
-    height: 64,
+    width: 68,
+    height: 68,
     marginBottom: 6,
   },
   bootTitle: {
@@ -1596,32 +1482,32 @@ const styles = StyleSheet.create({
   },
   onboardingContent: {
     padding: 20,
-    paddingTop: 48,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 24 : 48,
   },
   brandHero: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 26,
   },
   brandLogo: {
-    width: 56,
-    height: 56,
-    marginBottom: 12,
+    width: 58,
+    height: 58,
+    marginBottom: 10,
   },
   brandTitle: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: '800',
     color: '#ffffff',
   },
   brandSub: {
-    fontSize: 14,
+    fontSize: 13.5,
     color: '#a1a1aa',
     marginTop: 4,
     textAlign: 'center',
   },
   formCard: {
     backgroundColor: '#121214',
-    borderRadius: 18,
-    padding: 18,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#1e1e24',
     gap: 14,
@@ -1630,18 +1516,18 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   inputLabel: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#e4e4e7',
   },
   darkInput: {
-    height: 46,
+    height: 44,
     backgroundColor: '#18181b',
     borderWidth: 1,
     borderColor: '#27272a',
     borderRadius: 10,
-    paddingHorizontal: 14,
-    fontSize: 14,
+    paddingHorizontal: 12,
+    fontSize: 13.5,
     color: '#ffffff',
   },
   gradeGrid: {
@@ -1650,7 +1536,7 @@ const styles = StyleSheet.create({
   },
   gradePill: {
     flex: 1,
-    height: 40,
+    height: 38,
     borderRadius: 10,
     backgroundColor: '#18181b',
     borderWidth: 1,
@@ -1663,7 +1549,7 @@ const styles = StyleSheet.create({
     borderColor: '#ffffff',
   },
   gradePillText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#a1a1aa',
   },
@@ -1671,7 +1557,7 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   primaryButton: {
-    height: 46,
+    height: 44,
     borderRadius: 10,
     backgroundColor: '#ffffff',
     alignItems: 'center',
@@ -1682,17 +1568,17 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   primaryButtonText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#000000',
   },
-  // TOP HEADER
+  // TOP HEADER (SAFE TOP STATUS BAR PADDING)
   topHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: Platform.OS === 'android' ? 10 : 6,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 10 : 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#121214',
@@ -1701,6 +1587,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  headerLogoIcon: {
+    width: 22,
+    height: 22,
   },
   appHeaderTitle: {
     fontSize: 20,
@@ -1732,28 +1622,28 @@ const styles = StyleSheet.create({
     maxWidth: 140,
   },
   headerUserName: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
     color: '#ffffff',
   },
   mainScroll: {
     paddingHorizontal: 14,
     paddingTop: 12,
-    paddingBottom: 110,
+    paddingBottom: 100,
   },
   greetingBlock: {
-    marginBottom: 14,
+    marginBottom: 12,
   },
   greetingTitle: {
-    fontSize: 22,
+    fontSize: 21,
     fontWeight: '800',
     color: '#ffffff',
     marginBottom: 3,
   },
   greetingSub: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#a1a1aa',
-    lineHeight: 17,
+    lineHeight: 16,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -1761,7 +1651,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sectionTitleText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#ffffff',
   },
@@ -1769,53 +1659,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   subjectFolderCard: {
     width: '48.5%',
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 13,
+    padding: 11,
     marginBottom: 8,
   },
   subjectCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    marginBottom: 5,
   },
   unitCountPill: {
     backgroundColor: '#18181b',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: '#27272a',
   },
   unitCountText: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#a1a1aa',
     fontWeight: '600',
   },
   subjectCardTitle: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '700',
     color: '#ffffff',
     marginBottom: 2,
   },
   subjectCardPages: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#71717a',
   },
   singleStatCard: {
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 13,
+    padding: 13,
+    marginBottom: 10,
   },
   statHeader: {
     flexDirection: 'row',
@@ -1823,42 +1713,42 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   statLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
     color: '#a1a1aa',
     marginLeft: 6,
     letterSpacing: 0.5,
   },
   statValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     color: '#ffffff',
     marginBottom: 2,
   },
   statSubText: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#71717a',
   },
   quizCard: {
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 13,
+    padding: 13,
+    marginBottom: 10,
   },
   quizHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    marginBottom: 5,
   },
   quizHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   quizTitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#ffffff',
     marginLeft: 6,
@@ -1872,20 +1762,20 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   quizSubjectTagText: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '700',
     color: '#ffffff',
   },
   quizQuestionText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '500',
     color: '#e4e4e7',
-    lineHeight: 17,
-    marginBottom: 10,
+    lineHeight: 16,
+    marginBottom: 9,
   },
   quizOptionsGrid: {
     gap: 6,
-    marginBottom: 10,
+    marginBottom: 9,
   },
   quizRowTwo: {
     flexDirection: 'row',
@@ -1897,8 +1787,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#27272a',
     borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 9,
   },
   quizOptionPillSelected: {
     borderColor: '#ffffff',
@@ -1912,7 +1802,7 @@ const styles = StyleSheet.create({
     borderColor: '#f43f5e',
   },
   quizOptionText: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#a1a1aa',
     fontWeight: '500',
   },
@@ -1921,7 +1811,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   feedbackBox: {
-    padding: 10,
+    padding: 9,
     borderRadius: 8,
     marginBottom: 8,
   },
@@ -1932,28 +1822,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#4c0519',
   },
   feedbackTitle: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
     color: '#ffffff',
     marginBottom: 2,
   },
   feedbackExplain: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#e4e4e7',
-    lineHeight: 15,
+    lineHeight: 14,
   },
   newQuizButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: '#27272a',
     borderRadius: 7,
     backgroundColor: '#121214',
   },
   newQuizButtonText: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '600',
     color: '#ffffff',
   },
@@ -1963,85 +1853,213 @@ const styles = StyleSheet.create({
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 13,
+    padding: 13,
+    marginBottom: 10,
   },
   classAwareTextGroup: {
     flex: 1,
     marginLeft: 10,
   },
   classAwareTitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#ffffff',
     marginBottom: 2,
   },
   classAwareSub: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#71717a',
-    lineHeight: 15,
+    lineHeight: 14,
   },
-  // LEARN TAB (CHAT HUB)
+  // LEARN TAB (CHAT HUB WITH SIDEBAR HEADER)
   learnTabContainer: {
     flex: 1,
     backgroundColor: '#000000',
   },
-  chatHubTopBar: {
+  chatHubHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#18181b',
     backgroundColor: '#09090b',
   },
-  sessionPillsScroll: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    gap: 8,
+  sidebarToggleButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  newChatPill: {
+  activeChatTitleBox: {
+    flex: 1,
+    marginHorizontal: 10,
+  },
+  activeChatTitleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  newChatHeaderButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // SLIDE-OUT SIDEBAR DRAWER
+  sidebarOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    flexDirection: 'row',
+  },
+  sidebarBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+  },
+  sidebarContent: {
+    width: '75%',
+    backgroundColor: '#0e0e11',
+    borderRightWidth: 1,
+    borderRightColor: '#27272a',
+    padding: 16,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 12 : 20,
+  },
+  sidebarHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
+    justifyContent: 'space-between',
+    marginBottom: 16,
   },
-  newChatPillText: {
-    fontSize: 12,
+  sidebarTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  sidebarNewChatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    paddingVertical: 9,
+    marginBottom: 14,
+  },
+  sidebarNewChatText: {
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#000000',
   },
-  sessionPill: {
+  sidebarChatItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#121214',
+    backgroundColor: '#141418',
     borderWidth: 1,
-    borderColor: '#27272a',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    maxWidth: 160,
+    borderColor: '#24242a',
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginBottom: 7,
   },
-  sessionPillActive: {
+  sidebarChatItemActive: {
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
   },
-  sessionPillTitle: {
+  sidebarChatTitle: {
+    flex: 1,
     fontSize: 12,
     fontWeight: '600',
     color: '#a1a1aa',
   },
-  sessionPillTitleActive: {
+  sidebarChatTitleActive: {
     color: '#000000',
     fontWeight: '700',
   },
-  // FLOATING BOT BUTTON
-  floatingBotButton: {
+  // REVISION & MOCK PRACTICE TAB
+  mockExamBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#121214',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+  mockBannerTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  mockBannerSub: {
+    fontSize: 11,
+    color: '#a1a1aa',
+    lineHeight: 15,
+  },
+  mockBannerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 9,
+    marginLeft: 10,
+  },
+  mockBannerButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  mockModulesContainer: {
+    gap: 8,
+    marginBottom: 20,
+  },
+  mockModuleItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0c0c0e',
+    borderWidth: 1,
+    borderColor: '#1e1e24',
+    borderRadius: 12,
+    padding: 13,
+  },
+  mockModuleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  mockModuleTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  mockModuleSub: {
+    fontSize: 10.5,
+    color: '#71717a',
+  },
+  // MOVABLE / DRAGGABLE FLOATING BOT
+  floatingBotMovable: {
     position: 'absolute',
-    bottom: 84,
-    right: 16,
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 48,
+    height: 48,
+    zIndex: 99,
+  },
+  floatingBotInner: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#18181b',
     borderWidth: 1.5,
     borderColor: '#ffffff',
@@ -2052,7 +2070,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 6,
     elevation: 10,
-    zIndex: 99,
+    overflow: 'hidden',
+  },
+  floatingBotLogo: {
+    width: 28,
+    height: 28,
   },
   // BOTTOM TAB BAR (SAFE OVERLAY)
   bottomTabBar: {
@@ -2063,15 +2085,15 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#18181b',
     paddingTop: 6,
-    paddingBottom: Platform.OS === 'android' ? 24 : 10,
+    paddingBottom: Platform.OS === 'android' ? 26 : 10,
   },
   tabItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
   },
   tabLabel: {
-    fontSize: 10.5,
+    fontSize: 9.5,
     color: '#71717a',
     marginTop: 2,
     fontWeight: '500',
@@ -2087,16 +2109,16 @@ const styles = StyleSheet.create({
     zIndex: 150,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 18,
+    padding: 16,
   },
   mediumSelectorCard: {
     width: '100%',
     backgroundColor: '#121214',
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#27272a',
-    padding: 18,
-    gap: 12,
+    padding: 16,
+    gap: 10,
   },
   mediumSelectorHeader: {
     flexDirection: 'row',
@@ -2105,13 +2127,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   mediumSelectorTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: '#ffffff',
     marginBottom: 2,
   },
   mediumSelectorSub: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#a1a1aa',
   },
   mediumChoiceItem: {
@@ -2120,236 +2142,54 @@ const styles = StyleSheet.create({
     backgroundColor: '#18181b',
     borderWidth: 1,
     borderColor: '#27272a',
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 11,
+    padding: 12,
   },
   mediumChoiceTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#ffffff',
     marginBottom: 2,
   },
   mediumChoiceDesc: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#a1a1aa',
   },
-  // FULL-SCREEN SCROLLABLE PDF VIEWER (MATCHING SCREENSHOT 4)
+  // CHAT MODAL
   fullModalOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000000',
     zIndex: 200,
   },
-  pdfTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingTop: Platform.OS === 'android' ? 10 : 6,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#18181b',
-  },
-  pdfBackButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#121214',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-  },
-  pdfHeaderInfo: {
-    flex: 1,
-  },
-  pdfHeaderTitle: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  pdfHeaderPageInfo: {
-    fontSize: 10.5,
-    color: '#a1a1aa',
-  },
-  openExternalPdfBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 6,
-  },
-  pdfHeaderAiButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    marginLeft: 6,
-  },
-  pdfHeaderAiButtonText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  pdfDocumentScroll: {
-    padding: 14,
-    paddingBottom: 40,
-  },
-  pdfBookPagePaper: {
-    backgroundColor: '#0c0c0e',
-    borderWidth: 1,
-    borderColor: '#1e1e24',
-    borderRadius: 14,
-    padding: 18,
-    marginBottom: 14,
-  },
-  pdfDocPageTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  pdfUnitHeadingTop: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#a1a1aa',
-  },
-  pdfPageNumberTop: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#71717a',
-  },
-  pdfBookTitleBlock: {
-    alignItems: 'center',
-    marginVertical: 10,
-  },
-  pdfBookUnitMainTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#a1a1aa',
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  pdfBookChapterTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#ffffff',
-    textAlign: 'center',
-  },
-  pdfDividerLine: {
-    height: 1,
-    backgroundColor: '#1e1e24',
-    marginVertical: 14,
-  },
-  pdfSubSectionTitle: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#ffffff',
-    marginBottom: 6,
-  },
-  pdfFormulaHighlightBox: {
-    backgroundColor: '#141418',
-    borderWidth: 1,
-    borderColor: '#24242e',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-  },
-  pdfFormulaMathText: {
-    fontSize: 13,
-    color: '#ffffff',
-    fontWeight: '600',
-    lineHeight: 18,
-  },
-  pdfBookBodyText: {
-    fontSize: 12.5,
-    color: '#d4d4d8',
-    lineHeight: 20,
-    marginBottom: 10,
-  },
-  pdfExamNoticeBox: {
-    backgroundColor: '#121214',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    borderRadius: 10,
-    padding: 12,
-  },
-  pdfExamNoticeTitle: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#ffffff',
-    marginBottom: 4,
-  },
-  pdfExamNoticeBody: {
-    fontSize: 11,
-    color: '#a1a1aa',
-    lineHeight: 16,
-  },
-  pdfBottomBarControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#0c0c0e',
-    borderWidth: 1,
-    borderColor: '#1e1e24',
-    borderRadius: 12,
-    padding: 8,
-  },
-  pdfBottomNavPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  pdfBottomNavPillDisabled: {
-    opacity: 0.3,
-  },
-  pdfNavPillText: {
-    fontSize: 11.5,
-    color: '#ffffff',
-    fontWeight: '600',
-    marginHorizontal: 4,
-  },
-  pdfPageIndicatorBubble: {
-    backgroundColor: '#121214',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  pdfPageIndicatorText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  // CHAT MODAL
   chatTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: Platform.OS === 'android' ? 10 : 6,
-    paddingBottom: 12,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 10 : 12,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#18181b',
   },
+  chatModalLogoIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 6,
+  },
+  chatModalHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
   chatCloseButton: {
-    width: 36,
-    height: 36,
+    width: 34,
+    height: 34,
     alignItems: 'center',
     justifyContent: 'center',
   },
   chatBotIconHeader: {
-    width: 36,
-    height: 36,
+    width: 34,
+    height: 34,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2360,79 +2200,105 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 28,
+    padding: 24,
+  },
+  chatEmptyLogo: {
+    width: 52,
+    height: 52,
+    marginBottom: 10,
   },
   chatEmptyTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
     color: '#ffffff',
     textAlign: 'center',
-    marginTop: 12,
-    marginBottom: 6,
+    marginBottom: 4,
   },
   chatEmptySub: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#71717a',
     textAlign: 'center',
-    lineHeight: 17,
+    lineHeight: 16,
   },
   chatMessageList: {
-    padding: 14,
+    padding: 12,
   },
   userMsgRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    marginBottom: 10,
+    marginBottom: 9,
   },
   botMsgRow: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
-    marginBottom: 10,
+    marginBottom: 11,
   },
   botAvatarBox: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#ffffff',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 8,
-    marginTop: 3,
+    marginRight: 7,
+    marginTop: 2,
+    overflow: 'hidden',
+  },
+  botAvatarImage: {
+    width: 18,
+    height: 18,
   },
   userBubble: {
     maxWidth: '82%',
     backgroundColor: '#27272a',
-    borderRadius: 14,
+    borderRadius: 13,
     borderBottomRightRadius: 3,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
   },
   botBubble: {
-    maxWidth: '82%',
+    maxWidth: '84%',
     backgroundColor: '#141416',
     borderWidth: 1,
     borderColor: '#24242a',
-    borderRadius: 14,
+    borderRadius: 13,
     borderBottomLeftRadius: 3,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 10,
   },
   bubbleText: {
-    fontSize: 13.5,
+    fontSize: 13,
     color: '#ffffff',
     lineHeight: 19,
   },
+  copyMessageAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    marginTop: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    backgroundColor: '#1c1c22',
+    borderRadius: 5,
+  },
+  copyMessageActionText: {
+    fontSize: 10.5,
+    color: '#a1a1aa',
+    fontWeight: '600',
+  },
   chatAttachmentPill: {
     backgroundColor: '#1f1f23',
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 5,
     alignSelf: 'flex-start',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   chatAttachmentText: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#a1a1aa',
   },
   loadingBubbleRow: {
@@ -2440,13 +2306,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingBubbleText: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#a1a1aa',
-    marginLeft: 8,
+    marginLeft: 7,
   },
   chatInputBarContainer: {
-    paddingHorizontal: 14,
-    paddingTop: 8,
+    paddingHorizontal: 12,
+    paddingTop: 7,
     paddingBottom: Platform.OS === 'android' ? 26 : 10,
     backgroundColor: '#000000',
   },
@@ -2456,22 +2322,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#27272a',
-    borderRadius: 22,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: 20,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
   },
   chatAttachIconButton: {
-    marginRight: 8,
+    marginRight: 7,
   },
   chatPillInput: {
     flex: 1,
-    minHeight: 26,
-    maxHeight: 90,
-    fontSize: 13.5,
+    minHeight: 24,
+    maxHeight: 85,
+    fontSize: 13,
     color: '#ffffff',
     paddingVertical: 0,
   },
   chatSendIconButton: {
-    marginLeft: 8,
+    marginLeft: 7,
   },
 });

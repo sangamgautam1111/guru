@@ -807,9 +807,9 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         worker.execute {
             try {
                 val context = reactApplicationContext
-                val fullAssetPath = "grade10/$assetRelativePath"
+                val fullAssetPath = if (assetRelativePath.startsWith("grade10/")) assetRelativePath else "grade10/$assetRelativePath"
                 val inputStream = context.assets.open(fullAssetPath)
-                val cleanName = assetRelativePath.substringAfterLast("/").replace(" ", "_")
+                val cleanName = fullAssetPath.substringAfterLast("/").replace(" ", "_")
                 val outFile = File(context.cacheDir, cleanName)
 
                 if (!outFile.exists() || outFile.length() == 0L) {
@@ -832,12 +832,28 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                     addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
 
-                context.startActivity(intent)
+                val chooser = android.content.Intent.createChooser(intent, "Open Textbook PDF with").apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
                 promise.resolve(true)
             } catch (e: Exception) {
                 Log.e(tag, "Failed to open asset PDF: ${e.message}", e)
                 promise.reject("PDF_OPEN_ERROR", e.message, e)
             }
+        }
+    }
+
+    @ReactMethod
+    fun copyToClipboard(text: String, promise: Promise) {
+        try {
+            val context = reactApplicationContext
+            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = android.content.ClipData.newPlainText("Guru Note", text)
+            clipboard.setPrimaryClip(clip)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("CLIPBOARD_ERROR", e.message, e)
         }
     }
 
