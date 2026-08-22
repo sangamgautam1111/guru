@@ -481,11 +481,78 @@ export default function App() {
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
   const activeMessages = activeSession?.messages ?? [];
 
-  const pickRandomQuiz = () => {
-    const randomIndex = Math.floor(Math.random() * ALL_QUIZ_POOL.length);
-    setCurrentQuiz(ALL_QUIZ_POOL[randomIndex]);
+  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+
+  const generateAiQuiz = async () => {
     setSelectedOption(null);
     setQuizStatus('idle');
+
+    if (!isModelReady || Platform.OS !== 'android' || !NativeModules.LLMInferenceModule?.generateResponse) {
+      const randomIndex = Math.floor(Math.random() * ALL_QUIZ_POOL.length);
+      setCurrentQuiz(ALL_QUIZ_POOL[randomIndex]);
+      return;
+    }
+
+    setIsGeneratingQuiz(true);
+    const quizRequestId = `quiz_${Date.now()}`;
+
+    const subjects = ['Science', 'Compulsory Mathematics', 'Computer Science', 'Social Studies'];
+    const randomSubject = subjects[Math.floor(Math.random() * subjects.length)];
+
+    const quizPrompt = `Generate 1 multiple choice question for Grade 10 Nepal CDC subject "${randomSubject}". Respond ONLY with a valid JSON object matching this schema, with no markdown code fences and no other text:
+{"subject":"${randomSubject}","question":"Question text here?","options":["Option A","Option B","Option C","Option D"],"correctIndex":0,"explanation":"Brief 1-sentence explanation why this answer is correct."}`;
+
+    const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event) => {
+      if (event.requestId !== quizRequestId) return;
+      setIsGeneratingQuiz(false);
+      doneSub.remove();
+
+      try {
+        const raw = (event.text || event.fullResponse || '').trim();
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (
+            parsed.question &&
+            Array.isArray(parsed.options) &&
+            parsed.options.length >= 4 &&
+            typeof parsed.correctIndex === 'number'
+          ) {
+            setCurrentQuiz({
+              subject: parsed.subject || randomSubject,
+              question: parsed.question,
+              options: parsed.options.slice(0, 4),
+              correctIndex: Math.min(3, Math.max(0, parsed.correctIndex)),
+              explanation: parsed.explanation || 'Correct concept from curriculum.',
+            });
+            return;
+          }
+        }
+      } catch (_) {}
+
+      const randomIndex = Math.floor(Math.random() * ALL_QUIZ_POOL.length);
+      setCurrentQuiz(ALL_QUIZ_POOL[randomIndex]);
+    });
+
+    try {
+      await NativeModules.LLMInferenceModule.generateResponse(
+        quizPrompt,
+        'EN',
+        true,
+        [],
+        quizRequestId,
+        ''
+      );
+    } catch (_) {
+      setIsGeneratingQuiz(false);
+      doneSub.remove();
+      const randomIndex = Math.floor(Math.random() * ALL_QUIZ_POOL.length);
+      setCurrentQuiz(ALL_QUIZ_POOL[randomIndex]);
+    }
+  };
+
+  const pickRandomQuiz = () => {
+    void generateAiQuiz();
   };
 
   // --- HARDWARE BACK BUTTON HANDLER ---
@@ -1702,76 +1769,89 @@ export default function App() {
           <View style={styles.quizCard}>
             <View style={styles.quizHeaderRow}>
               <View style={styles.quizHeaderLeft}>
-                <HelpCircle size={16} color="#ffffff" />
-                <Text style={styles.quizTitle}>Quick quiz</Text>
+                <Sparkles size={16} color="#38bdf8" />
+                <Text style={styles.quizTitle}>AI Exam Quiz</Text>
               </View>
               <View style={styles.quizSubjectTag}>
                 <Text style={styles.quizSubjectTagText}>{currentQuiz.subject}</Text>
               </View>
             </View>
 
-            <Text style={styles.quizQuestionText}>{currentQuiz.question}</Text>
+            {isGeneratingQuiz ? (
+              <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 24, gap: 8 }}>
+                <ActivityIndicator size="small" color="#38bdf8" />
+                <Text style={{ fontSize: 13, color: '#a1a1aa' }}>Guru AI is generating a fresh exam question...</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.quizQuestionText}>{currentQuiz.question}</Text>
 
-            <View style={styles.quizOptionsGrid}>
-              <View style={styles.quizRowTwo}>
-                {currentQuiz.options.slice(0, 2).map((opt, idx) => {
-                  const isSelected = selectedOption === idx;
-                  const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
-                  const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
-                  return (
-                    <TouchableOpacity
-                      key={`${opt}-${idx}`}
-                      style={[
-                        styles.quizOptionPill,
-                        isSelected && styles.quizOptionPillSelected,
-                        isCorrect && styles.quizOptionPillCorrect,
-                        isWrong && styles.quizOptionPillWrong,
-                      ]}
-                      onPress={() => handleQuizAnswer(idx)}
-                    >
-                      <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
-                        {opt}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <View style={styles.quizRowTwo}>
-                {currentQuiz.options.slice(2, 4).map((opt, idx) => {
-                  const realIdx = idx + 2;
-                  const isSelected = selectedOption === realIdx;
-                  const isCorrect = quizStatus !== 'idle' && realIdx === currentQuiz.correctIndex;
-                  const isWrong = quizStatus === 'wrong' && isSelected && realIdx !== currentQuiz.correctIndex;
-                  return (
-                    <TouchableOpacity
-                      key={`${opt}-${realIdx}`}
-                      style={[
-                        styles.quizOptionPill,
-                        isSelected && styles.quizOptionPillSelected,
-                        isCorrect && styles.quizOptionPillCorrect,
-                        isWrong && styles.quizOptionPillWrong,
-                      ]}
-                      onPress={() => handleQuizAnswer(realIdx)}
-                    >
-                      <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
-                        {opt}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
+                <View style={styles.quizOptionsGrid}>
+                  <View style={styles.quizRowTwo}>
+                    {currentQuiz.options.slice(0, 2).map((opt, idx) => {
+                      const isSelected = selectedOption === idx;
+                      const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
+                      const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
+                      return (
+                        <TouchableOpacity
+                          key={`${opt}-${idx}`}
+                          style={[
+                            styles.quizOptionPill,
+                            isSelected && styles.quizOptionPillSelected,
+                            isCorrect && styles.quizOptionPillCorrect,
+                            isWrong && styles.quizOptionPillWrong,
+                          ]}
+                          onPress={() => handleQuizAnswer(idx)}
+                        >
+                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
+                            {opt}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <View style={styles.quizRowTwo}>
+                    {currentQuiz.options.slice(2, 4).map((opt, idx) => {
+                      const realIdx = idx + 2;
+                      const isSelected = selectedOption === realIdx;
+                      const isCorrect = quizStatus !== 'idle' && realIdx === currentQuiz.correctIndex;
+                      const isWrong = quizStatus === 'wrong' && isSelected && realIdx !== currentQuiz.correctIndex;
+                      return (
+                        <TouchableOpacity
+                          key={`${opt}-${realIdx}`}
+                          style={[
+                            styles.quizOptionPill,
+                            isSelected && styles.quizOptionPillSelected,
+                            isCorrect && styles.quizOptionPillCorrect,
+                            isWrong && styles.quizOptionPillWrong,
+                          ]}
+                          onPress={() => handleQuizAnswer(realIdx)}
+                        >
+                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
+                            {opt}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
 
-            {quizStatus !== 'idle' && (
-              <View style={[styles.feedbackBox, quizStatus === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong]}>
-                <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Almost there!'}</Text>
-                <Text style={styles.feedbackExplain}>{currentQuiz.explanation}</Text>
-              </View>
+                {quizStatus !== 'idle' && (
+                  <View style={[styles.feedbackBox, quizStatus === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong]}>
+                    <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Almost there!'}</Text>
+                    <Text style={styles.feedbackExplain}>{currentQuiz.explanation}</Text>
+                  </View>
+                )}
+              </>
             )}
 
-            <TouchableOpacity style={styles.newQuizButton} onPress={pickRandomQuiz}>
-              <RotateCcw size={13} color="#ffffff" style={{ marginRight: 5 }} />
-              <Text style={styles.newQuizButtonText}>New quiz (Random Subject)</Text>
+            <TouchableOpacity
+              style={[styles.newQuizButton, isGeneratingQuiz && { opacity: 0.6 }]}
+              onPress={pickRandomQuiz}
+              disabled={isGeneratingQuiz}
+            >
+              <Sparkles size={13} color="#ffffff" style={{ marginRight: 5 }} />
+              <Text style={styles.newQuizButtonText}>{isGeneratingQuiz ? 'Generating AI Question...' : 'Generate New AI Quiz'}</Text>
             </TouchableOpacity>
           </View>
 
@@ -2259,13 +2339,8 @@ export default function App() {
             </View>
           )}
 
-          {/* Settings Row */}
+          {/* Profile Edit Row */}
           <View style={{ marginTop: 20 }}>
-            <TouchableOpacity style={styles.solverSettingsRow} onPress={() => setScreen('download')}>
-              <HardDrive size={15} color="#71717a" style={{ marginRight: 8 }} />
-              <Text style={styles.solverSettingsText}>Manage AI Model & Offline Resources</Text>
-              <ChevronRight size={14} color="#3f3f46" />
-            </TouchableOpacity>
             <TouchableOpacity style={styles.solverSettingsRow} onPress={() => setScreen('onboarding')}>
               <User size={15} color="#71717a" style={{ marginRight: 8 }} />
               <Text style={styles.solverSettingsText}>{user?.name || 'Student'} — Edit Profile</Text>
