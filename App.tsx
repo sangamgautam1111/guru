@@ -71,7 +71,7 @@ import { MathMarkdownRenderer } from './MathMarkdownRenderer';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-type TabState = 'home' | 'learn' | 'revision' | 'profile';
+type TabState = 'home' | 'learn' | 'revision' | 'solver';
 type ScreenState = 'onboarding' | 'download' | 'main';
 type SubjectId = 'science' | 'math' | 'social' | 'nepali' | 'english' | 'opt_math' | 'computer';
 type QuizStatus = 'idle' | 'correct' | 'wrong';
@@ -242,17 +242,10 @@ const formatGemmaResponse = (text: string): string => {
     .replace(/\\rightarrow\b|\\to\b/g, ' → ')
     .replace(/\\text\{([^{}]+)\}/g, '$1');
 
-  // 8. Markdown Headings & Clean Section Breaks
+  // 8. Markdown Headings & Clean Section Breaks (Strip all # hashes)
   out = out
-    .replace(/([^\n])\s*(#{1,4}\s+[A-Za-z0-9])/g, '$1\n\n$2')
-    .replace(/^(?:#|\*){1,4}\s*$/gm, '')
-    .replace(/^(#{1,4})\s*(.*?)$/gm, (_match, hashes, title) => {
-      const cleanTitle = title.replace(/^#+\s*/, '').trim();
-      return cleanTitle ? `${hashes} ${cleanTitle}` : '';
-    });
-
-  // 9. Separate glued steps/phases
-  out = out
+    .replace(/^[ \t]*#{1,6}\s*/gm, '')
+    .replace(/#{1,6}\s*/g, '')
     .replace(/([^\n])\s*(Phase\s*\d+:|Step\s*\d+:|Summary:)/gi, '$1\n\n$2')
     .replace(/(Phase\s*\d+:\s*[^.\n]+?\.)\s*([A-Z])/g, '$1\n\n$2')
     .replace(/(Step\s*\d+:\s*[^.\n]+?\.)\s*([A-Z])/g, '$1\n\n$2');
@@ -453,6 +446,11 @@ export default function App() {
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
   const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
   const [attachedImageUri, setAttachedImageUri] = useState<string | null>(null);
+
+  // Math Solver — Camera-Based Step-by-Step Problem Solver
+  const [solverImageUri, setSolverImageUri] = useState<string | null>(null);
+  const [solverResult, setSolverResult] = useState<string | null>(null);
+  const [isSolving, setIsSolving] = useState(false);
 
   const chatListRef = useRef<FlatList>(null);
   const activeGenerationRef = useRef<GenerationRef | null>(null);
@@ -715,8 +713,13 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
-    const chunkSub = DeviceEventEmitter.addListener('LiteRTResponseChunk', () => {
-      // Keep UI in clean loading state during generation without flashing raw tokens
+    const chunkSub = DeviceEventEmitter.addListener('LiteRTResponseChunk', (event: { requestId?: string; text?: string; chunk?: string }) => {
+      const active = activeGenerationRef.current;
+      if (!active || (event.requestId && event.requestId !== active.requestId)) return;
+      const currentText = event.text || event.chunk || '';
+      if (currentText) {
+        updateAssistantMessage(active.sessionId, active.messageId, currentText, true);
+      }
     });
 
     const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event: { requestId?: string; text?: string }) => {
@@ -920,7 +923,7 @@ export default function App() {
           ...session,
           updatedAt: Date.now(),
           messages: session.messages.map((m) =>
-            m.id === messageId ? { ...m, text: isPending ? '' : formatted, isPending } : m
+            m.id === messageId ? { ...m, text: isPending ? text : formatted, isPending } : m
           ),
         };
       })
@@ -1261,6 +1264,78 @@ export default function App() {
     setQuizStatus(index === currentQuiz.correctIndex ? 'correct' : 'wrong');
   };
 
+  // --- MATH SOLVER: SNAP & SOLVE ENGINE ---
+  const solveMathFromImage = async (imageUri: string) => {
+    setSolverImageUri(imageUri);
+    setSolverResult(null);
+    setIsSolving(true);
+
+    const solverRequestId = `solver_${Date.now()}`;
+
+    // Listen for the completed solution from the LLM
+    const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event) => {
+      if (event.requestId !== solverRequestId) return;
+      const rawAnswer = event.fullResponse || '';
+      const formatted = formatGemmaResponse(rawAnswer);
+      setSolverResult(formatted);
+      setIsSolving(false);
+      doneSub.remove();
+    });
+
+    try {
+      const mathSolverPrompt =
+        'You are solving a math or science problem from this image. ' +
+        'Identify the problem clearly, then solve it step by step. ' +
+        'Show each step with clear labels (Step 1, Step 2, etc.). ' +
+        'Use proper mathematical notation. ' +
+        'End with a boxed final answer. Be structured and concise.';
+
+      await NativeModules.LLMInferenceModule.generateResponse(
+        mathSolverPrompt,
+        'EN',
+        true,
+        [],
+        solverRequestId,
+        imageUri
+      );
+    } catch (err: any) {
+      setSolverResult(
+        'Could not process this image right now. Please make sure the AI model is fully loaded and try again.'
+      );
+      setIsSolving(false);
+      doneSub.remove();
+    }
+  };
+
+  const handleSolverCapture = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        showToast('Camera permission is required to snap math problems.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        solveMathFromImage(res.assets[0].uri);
+      }
+    } catch (_) {}
+  };
+
+  const handleSolverGallery = async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        solveMathFromImage(res.assets[0].uri);
+      }
+    } catch (_) {}
+  };
+
   // --- BOOT SCREEN ---
   if (isBooting) {
     return (
@@ -1556,7 +1631,7 @@ export default function App() {
     );
   }
 
-  // --- MAIN SCREEN: DASHBOARD, LEARN, REVISION, PROFILE OR IN-APP PDF VIEWER ---
+  // --- MAIN SCREEN: DASHBOARD, LEARN, REVISION, SOLVER OR IN-APP PDF VIEWER ---
   return (
     <SafeAreaView style={styles.darkContainer}>
       <StatusBar barStyle="light-content" backgroundColor="#000000" translucent={false} />
@@ -1767,10 +1842,20 @@ export default function App() {
                         </View>
                       )}
                       {item.isPending ? (
-                        <View style={styles.loadingBubbleRow}>
-                          <ActivityIndicator size="small" color="#38bdf8" />
-                          <Text style={styles.loadingBubbleText}>Guru is solving & formatting answer...</Text>
-                        </View>
+                        item.text ? (
+                          <View>
+                            <MathMarkdownRenderer content={item.text} isUser={false} />
+                            <View style={[styles.loadingBubbleRow, { marginTop: 6 }]}>
+                              <ActivityIndicator size="small" color="#38bdf8" />
+                              <Text style={styles.loadingBubbleText}>Generating...</Text>
+                            </View>
+                          </View>
+                        ) : (
+                          <View style={styles.loadingBubbleRow}>
+                            <ActivityIndicator size="small" color="#38bdf8" />
+                            <Text style={styles.loadingBubbleText}>Guru is solving & thinking...</Text>
+                          </View>
+                        )
                       ) : (
                         <View>
                           <MathMarkdownRenderer content={item.text} isUser={item.isUser} />
@@ -2086,22 +2171,105 @@ export default function App() {
         </ScrollView>
       )}
 
-      {/* TAB 4: PROFILE */}
-      {activeTab === 'profile' && (
-        <ScrollView contentContainerStyle={styles.mainScroll}>
-          <Text style={styles.sectionTitleText}>Student Profile</Text>
-          <View style={styles.formCard}>
-            <Text style={styles.inputLabel}>{`Name: ${user?.name}`}</Text>
-            <Text style={styles.inputLabel}>{`School: ${user?.school}`}</Text>
-            <Text style={styles.inputLabel}>{`Class: ${user?.grade}`}</Text>
+      {/* TAB 4: MATH SOLVER — SNAP & SOLVE */}
+      {activeTab === 'solver' && (
+        <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
+          {/* Solver Header */}
+          <View style={styles.sectionHeaderRow}>
+            <Camera size={17} color="#38bdf8" style={{ marginRight: 7 }} />
+            <Text style={styles.sectionTitleText}>Math Solver</Text>
+          </View>
+          <Text style={styles.greetingSub}>
+            Snap or upload a photo of any math or science problem — Guru AI will solve it step by step, completely offline.
+          </Text>
 
-            <TouchableOpacity style={styles.newQuizButton} onPress={() => setScreen('download')}>
-              <HardDrive size={15} color="#ffffff" style={{ marginRight: 6 }} />
-              <Text style={styles.newQuizButtonText}>Manage AI Model & Offline Resources</Text>
+          {/* Capture Buttons */}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, marginBottom: 16 }}>
+            <TouchableOpacity
+              style={[styles.newQuizButton, { flex: 1, backgroundColor: '#38bdf8' }]}
+              onPress={handleSolverCapture}
+            >
+              <Camera size={16} color="#000000" style={{ marginRight: 6 }} />
+              <Text style={[styles.newQuizButtonText, { color: '#000000', fontWeight: '700' }]}>
+                Take Photo
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.newQuizButton, { marginTop: 10, backgroundColor: '#18181b' }]} onPress={() => setScreen('onboarding')}>
-              <Text style={styles.newQuizButtonText}>Edit Profile</Text>
+            <TouchableOpacity
+              style={[styles.newQuizButton, { flex: 1, backgroundColor: '#27272a' }]}
+              onPress={handleSolverGallery}
+            >
+              <ImageIcon size={16} color="#38bdf8" style={{ marginRight: 6 }} />
+              <Text style={styles.newQuizButtonText}>From Gallery</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Captured Image Preview */}
+          {solverImageUri && (
+            <View style={styles.solverImageContainer}>
+              <Image
+                source={{ uri: solverImageUri }}
+                style={styles.solverImagePreview}
+                resizeMode="contain"
+              />
+              <TouchableOpacity
+                style={styles.solverImageClearBtn}
+                onPress={() => {
+                  setSolverImageUri(null);
+                  setSolverResult(null);
+                  setIsSolving(false);
+                }}
+              >
+                <X size={14} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Loading State */}
+          {isSolving && (
+            <View style={styles.solverLoadingCard}>
+              <ActivityIndicator size="small" color="#38bdf8" />
+              <Text style={styles.solverLoadingText}>
+                Guru is analyzing the problem and solving step by step...
+              </Text>
+            </View>
+          )}
+
+          {/* Solution Output */}
+          {solverResult && !isSolving && (
+            <View style={styles.solverResultCard}>
+              <View style={styles.solverResultHeader}>
+                <CheckCircle2 size={15} color="#22c55e" style={{ marginRight: 6 }} />
+                <Text style={styles.solverResultTitle}>Solution</Text>
+              </View>
+              <View style={styles.solverResultContent}>
+                <MathMarkdownRenderer content={solverResult} />
+              </View>
+            </View>
+          )}
+
+          {/* Empty State — No Image Yet */}
+          {!solverImageUri && !isSolving && !solverResult && (
+            <View style={styles.solverEmptyState}>
+              <Camera size={40} color="#3f3f46" />
+              <Text style={styles.solverEmptyTitle}>No problem captured yet</Text>
+              <Text style={styles.solverEmptySubtitle}>
+                Point your camera at a textbook question, handwritten problem, or printed equation and tap "Take Photo"
+              </Text>
+            </View>
+          )}
+
+          {/* Settings Row */}
+          <View style={{ marginTop: 20 }}>
+            <TouchableOpacity style={styles.solverSettingsRow} onPress={() => setScreen('download')}>
+              <HardDrive size={15} color="#71717a" style={{ marginRight: 8 }} />
+              <Text style={styles.solverSettingsText}>Manage AI Model & Offline Resources</Text>
+              <ChevronRight size={14} color="#3f3f46" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.solverSettingsRow} onPress={() => setScreen('onboarding')}>
+              <User size={15} color="#71717a" style={{ marginRight: 8 }} />
+              <Text style={styles.solverSettingsText}>{user?.name || 'Student'} — Edit Profile</Text>
+              <ChevronRight size={14} color="#3f3f46" />
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -2145,9 +2313,9 @@ export default function App() {
           <Text style={[styles.tabLabel, activeTab === 'revision' && styles.tabLabelActive]}>Exam Revision</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('profile')}>
-          <User size={19} color={activeTab === 'profile' ? '#ffffff' : '#71717a'} />
-          <Text style={[styles.tabLabel, activeTab === 'profile' && styles.tabLabelActive]}>Profile</Text>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('solver')}>
+          <Camera size={19} color={activeTab === 'solver' ? '#38bdf8' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'solver' && styles.tabLabelActive]}>Solve</Text>
         </TouchableOpacity>
       </View>
 
@@ -2332,13 +2500,23 @@ export default function App() {
                           </View>
                         )}
                         {item.isPending ? (
-                          <View style={styles.loadingBubbleRow}>
-                            <ActivityIndicator size="small" color="#ffffff" />
-                            <Text style={styles.loadingBubbleText}>{item.text || 'Analyzing...'}</Text>
-                          </View>
+                          item.text ? (
+                            <View>
+                              <MathMarkdownRenderer content={item.text} isUser={false} />
+                              <View style={[styles.loadingBubbleRow, { marginTop: 6 }]}>
+                                <ActivityIndicator size="small" color="#38bdf8" />
+                                <Text style={styles.loadingBubbleText}>Generating...</Text>
+                              </View>
+                            </View>
+                          ) : (
+                            <View style={styles.loadingBubbleRow}>
+                              <ActivityIndicator size="small" color="#38bdf8" />
+                              <Text style={styles.loadingBubbleText}>Guru is solving & thinking...</Text>
+                            </View>
+                          )
                         ) : (
                           <View>
-                            <Text style={styles.bubbleText}>{item.text}</Text>
+                            <MathMarkdownRenderer content={item.text} isUser={item.isUser} />
                             {!item.isUser && (
                               <View style={styles.botActionButtonsRow}>
                                 <TouchableOpacity
@@ -3799,5 +3977,107 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#71717a',
+  },
+
+  // --- MATH SOLVER STYLES ---
+  solverImageContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    marginBottom: 14,
+    position: 'relative',
+  },
+  solverImagePreview: {
+    width: '100%',
+    height: 220,
+    borderRadius: 12,
+  },
+  solverImageClearBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 12,
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  solverLoadingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 14,
+    gap: 10,
+  },
+  solverLoadingText: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    flex: 1,
+  },
+  solverResultCard: {
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  solverResultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+    backgroundColor: '#0f0f10',
+  },
+  solverResultTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#22c55e',
+  },
+  solverResultContent: {
+    padding: 14,
+  },
+  solverEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    gap: 10,
+  },
+  solverEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#52525b',
+    marginTop: 4,
+  },
+  solverEmptySubtitle: {
+    fontSize: 12.5,
+    color: '#3f3f46',
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 32,
+  },
+  solverSettingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 10,
+    padding: 13,
+    marginBottom: 8,
+  },
+  solverSettingsText: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    flex: 1,
   },
 });

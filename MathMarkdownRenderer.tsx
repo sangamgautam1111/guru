@@ -94,12 +94,8 @@ export const formatMathSymbols = (text: string): string => {
 };
 
 /**
- * Splits model response text into well-formatted structural sections:
- * - Markdown Headings (###, ##, #)
- * - Numbered steps/formulas (1., 2., 3...)
- * - Bullet list items (•, -)
- * - Standalone formula cards (e.g. F = G (m1 m2 / r²))
- * - Standard paragraphs with bolding
+ * Splits model response text into natural, well-formatted paragraphs,
+ * headings, bullets, and math expressions with clean typography (no rigid boxes/tables).
  */
 export const MathMarkdownRenderer: React.FC<Props> = ({ content, isUser = false }) => {
   if (!content) return null;
@@ -112,9 +108,10 @@ export const MathMarkdownRenderer: React.FC<Props> = ({ content, isUser = false 
   let formatted = content
     // Strip repetitive leading greetings
     .replace(/^(?:Namaste[!,\s.-]*|Hello[!,\s.-]*|Hi[!,\s.-]*)/i, '')
-    // Ensure headings have newlines around them
-    .replace(/([^\n])\s*(#{1,4}\s+)/g, '$1\n\n$2')
-    // Insert line breaks before numbered items like ":1." or ".2." or "angles:1."
+    // Strip all markdown heading hashes from every line
+    .replace(/^[ \t]*#{1,6}\s*/gm, '')
+    .replace(/#{1,6}\s*/g, '')
+    // Insert clean line breaks before numbered items like "1. ", "2. "
     .replace(/([^\n])\s*(\b\d+\.\s+[A-Za-z])/g, '$1\n\n$2')
     // Convert list dashes/asterisks into clean bullets
     .replace(/([^\n])\s*(•|\-|\*)\s+/g, '$1\n• ')
@@ -131,80 +128,33 @@ export const MathMarkdownRenderer: React.FC<Props> = ({ content, isUser = false 
           return <View key={`spacer-${lineIdx}`} style={styles.paragraphSpacer} />;
         }
 
-        // Strip any isolated bare hashes
-        if (/^#{1,6}\s*$/.test(trimmed)) {
+        // Ignore any leftover hash strings
+        if (/^#+$/.test(trimmed)) {
           return null;
         }
 
         const mathFormatted = formatMathSymbols(trimmed);
 
-        // 1. Markdown Headings (### Heading, ## Heading, # Heading)
-        const headingMatch = mathFormatted.match(/^(#{1,4})\s+(.+)$/);
-        if (headingMatch) {
-          const level = headingMatch[1].length;
-          const headingText = headingMatch[2].replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
-
-          if (headingText.length > 0 && !/^#+$/.test(headingText)) {
-            return (
-              <View
-                key={`h-${lineIdx}`}
-                style={[
-                  styles.headingContainer,
-                  level <= 2 ? styles.majorHeadingBox : styles.subHeadingBox,
-                ]}
-              >
-                <View style={styles.headingAccentLine} />
-                <Text
-                  style={[
-                    styles.headingText,
-                    level <= 2 ? styles.majorHeadingText : styles.subHeadingText,
-                  ]}
-                >
-                  {headingText}
-                </Text>
-              </View>
-            );
-          }
-        }
-
-        // 2. Structured Phase / Step / Section Headings (e.g. "Phase 1: Definition", "Step 2: ...")
+        // 1. Structured Step / Section Headings (e.g. "Step 1: ...", "Phase 1: ...", "Summary:")
         const stepHeaderMatch = mathFormatted.match(/^(Phase\s*\d+|Step\s*\d+|Part\s*\d+|Summary|Key Concept|Formula|Definition|Explanation)(?::\s*|\s+-\s*|\s+)(.*)/i);
-        if (stepHeaderMatch && trimmed.length < 85) {
+        if (stepHeaderMatch && trimmed.length < 90) {
           const prefix = stepHeaderMatch[1];
           const rest = stepHeaderMatch[2];
           return (
-            <View key={`step-h-${lineIdx}`} style={styles.subHeadingBox}>
-              <View style={styles.headingAccentLine} />
-              <Text style={styles.subHeadingText}>
+            <View key={`step-${lineIdx}`} style={styles.headingBox}>
+              <Text style={styles.headingText}>
                 {prefix}{rest ? `: ${rest}` : ''}
               </Text>
             </View>
           );
         }
 
-        // 2. Numbered step / formula: e.g. "1. Dot Product: ..."
-        const numberedMatch = mathFormatted.match(/^(\d+)\.\s+(.*)/);
-        if (numberedMatch) {
-          const number = numberedMatch[1];
-          const itemText = numberedMatch[2];
-          return (
-            <View key={`num-${lineIdx}`} style={styles.numberedCard}>
-              <View style={styles.numberBadge}>
-                <Text style={styles.numberBadgeText}>{number}</Text>
-              </View>
-              <View style={styles.numberedContent}>
-                <RenderInlineFormatted text={itemText} />
-              </View>
-            </View>
-          );
-        }
-
-        // 3. Bullet item: e.g. "• Photosynthesis components..."
-        if (mathFormatted.startsWith('•') || mathFormatted.startsWith('-') || mathFormatted.startsWith('* ')) {
+        // 2. Bullet item: e.g. "• Gravity acts everywhere..."
+        if (mathFormatted.startsWith('•') || mathFormatted.startsWith('- ') || mathFormatted.startsWith('* ')) {
           const bulletText = mathFormatted.replace(/^[•\-\*]\s*/, '');
           return (
             <View key={`bullet-${lineIdx}`} style={styles.bulletRow}>
-              <View style={styles.bulletDot} />
+              <Text style={styles.bulletSymbol}>•</Text>
               <View style={styles.bulletContent}>
                 <RenderInlineFormatted text={bulletText} />
               </View>
@@ -212,22 +162,22 @@ export const MathMarkdownRenderer: React.FC<Props> = ({ content, isUser = false 
           );
         }
 
-        // 4. Standalone formula equation (contains = and math variables)
-        const isStandaloneFormula =
-          (mathFormatted.includes('=') || mathFormatted.includes('→')) &&
-          mathFormatted.length < 90 &&
-          !mathFormatted.startsWith('Where:') &&
-          !mathFormatted.startsWith('Here are');
-
-        if (isStandaloneFormula && (mathFormatted.includes('·') || mathFormatted.includes('×') || mathFormatted.includes('/') || mathFormatted.includes('²') || mathFormatted.includes('+') || mathFormatted.includes('-'))) {
+        // 3. Numbered list item: e.g. "1. First step..."
+        const numberedMatch = mathFormatted.match(/^(\d+[\.\)])\s+(.*)/);
+        if (numberedMatch) {
+          const numLabel = numberedMatch[1];
+          const itemText = numberedMatch[2];
           return (
-            <View key={`formula-${lineIdx}`} style={styles.formulaCard}>
-              <Text style={styles.formulaText}>{mathFormatted}</Text>
+            <View key={`num-${lineIdx}`} style={styles.numberedRow}>
+              <Text style={styles.numberLabel}>{numLabel}</Text>
+              <View style={styles.numberedContent}>
+                <RenderInlineFormatted text={itemText} />
+              </View>
             </View>
           );
         }
 
-        // 5. Standard Paragraph
+        // 4. Standard Paragraph with clean typography
         return (
           <View key={`p-${lineIdx}`} style={styles.paragraphBox}>
             <RenderInlineFormatted text={mathFormatted} />
@@ -286,7 +236,7 @@ const styles = StyleSheet.create({
   },
   assistantText: {
     fontSize: 14.5,
-    lineHeight: 22,
+    lineHeight: 23,
     color: '#e4e4e7',
     letterSpacing: 0.15,
   },
@@ -298,120 +248,55 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     backgroundColor: '#27272a',
     color: '#38bdf8',
-    paddingHorizontal: 4,
-    borderRadius: 3,
+    paddingHorizontal: 5,
+    borderRadius: 4,
     fontSize: 13,
   },
   paragraphSpacer: {
-    height: 8,
+    height: 6,
   },
   paragraphBox: {
     marginBottom: 6,
   },
-  headingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    marginBottom: 8,
-    paddingVertical: 4,
-  },
-  majorHeadingBox: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#27272a',
-    paddingBottom: 6,
-  },
-  subHeadingBox: {
-    backgroundColor: '#18181b',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: '#38bdf8',
-  },
-  headingAccentLine: {
-    width: 3,
-    height: 14,
-    backgroundColor: '#38bdf8',
-    borderRadius: 2,
-    marginRight: 6,
+  headingBox: {
+    marginTop: 10,
+    marginBottom: 4,
   },
   headingText: {
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  majorHeadingText: {
-    fontSize: 15.5,
-    color: '#ffffff',
-    letterSpacing: 0.3,
-  },
-  subHeadingText: {
-    fontSize: 14,
+    fontSize: 15,
+    fontWeight: '700',
     color: '#38bdf8',
     letterSpacing: 0.2,
-  },
-  numberedCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    borderRadius: 10,
-    padding: 10,
-    marginVertical: 4,
-  },
-  numberBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#3f3f46',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-    marginTop: 1,
-  },
-  numberBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  numberedContent: {
-    flex: 1,
   },
   bulletRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginVertical: 3,
-    paddingLeft: 4,
+    marginVertical: 2,
+    paddingLeft: 2,
   },
-  bulletDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#38bdf8',
-    marginTop: 8,
+  bulletSymbol: {
+    fontSize: 14,
+    color: '#38bdf8',
     marginRight: 8,
+    lineHeight: 22,
   },
   bulletContent: {
     flex: 1,
   },
-  formulaCard: {
-    backgroundColor: '#09090b',
-    borderWidth: 1,
-    borderColor: '#3f3f46',
-    borderLeftWidth: 3,
-    borderLeftColor: '#38bdf8',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    marginVertical: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
+  numberedRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginVertical: 2,
+    paddingLeft: 2,
   },
-  formulaText: {
-    fontSize: 15,
-    fontWeight: '600',
+  numberLabel: {
+    fontSize: 14,
+    fontWeight: '700',
     color: '#38bdf8',
-    letterSpacing: 0.5,
-    textAlign: 'center',
+    marginRight: 6,
+    lineHeight: 22,
+  },
+  numberedContent: {
+    flex: 1,
   },
 });
