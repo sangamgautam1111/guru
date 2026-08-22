@@ -160,6 +160,8 @@ dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
     implementation("com.google.mediapipe:tasks-core:0.10.14")
     implementation("com.google.mediapipe:tasks-genai:0.10.27")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

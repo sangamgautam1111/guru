@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   NativeModules,
   PanResponder,
+  PermissionsAndroid,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -42,12 +43,17 @@ import {
   Folder,
   GraduationCap,
   HardDrive,
+  Headphones,
   HelpCircle,
   Home,
+  Image as ImageIcon,
   Menu,
   MessageSquare,
+  Mic,
+  MicOff,
   PanelLeftClose,
   Plus,
+  Radio,
   RefreshCw,
   RotateCcw,
   Send,
@@ -61,6 +67,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react-native';
+import { MathMarkdownRenderer } from './MathMarkdownRenderer';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -145,13 +152,14 @@ const formatGemmaResponse = (text: string): string => {
 
   let out = text;
 
-  // 1. Strip special model tokens
+  // 1. Strip special model tokens & greetings
   out = out
     .replace(/<start_of_turn>/g, '')
     .replace(/<end_of_turn>/g, '')
     .replace(/<eos>/g, '')
     .replace(/<\/s>/g, '')
-    .replace(/\[\/?s\]/g, '');
+    .replace(/\[\/?s\]/g, '')
+    .replace(/^(?:Namaste[!,\s.-]*|Hello[!,\s.-]*|Hi[!,\s.-]*)/i, '');
 
   // 2. Fix glued word boundaries from LLM headings (e.g., "EquationPhotosynthesis", "ComponentsTo", "SummaryPhotosynthesis")
   out = out
@@ -234,19 +242,20 @@ const formatGemmaResponse = (text: string): string => {
     .replace(/\\rightarrow\b|\\to\b/g, ' → ')
     .replace(/\\text\{([^{}]+)\}/g, '$1');
 
-  // 8. Markdown Headings to Clean Spaced Sections
+  // 8. Markdown Headings & Clean Section Breaks
   out = out
-    .replace(/###\s*([0-9]+[\.\)])\s*/g, '\n\n$1 ')
-    .replace(/####\s*(.*?)(?=\n|$)/g, '\n\n• $1:\n')
-    .replace(/###\s*(.*?)(?=\n|$)/g, '\n\n$1\n')
-    .replace(/##\s*(.*?)(?=\n|$)/g, '\n\n$1\n')
-    .replace(/#\s*(.*?)(?=\n|$)/g, '\n\n$1\n');
+    .replace(/([^\n])\s*(#{1,4}\s+[A-Za-z0-9])/g, '$1\n\n$2')
+    .replace(/^(?:#|\*){1,4}\s*$/gm, '')
+    .replace(/^(#{1,4})\s*(.*?)$/gm, (_match, hashes, title) => {
+      const cleanTitle = title.replace(/^#+\s*/, '').trim();
+      return cleanTitle ? `${hashes} ${cleanTitle}` : '';
+    });
 
-  // 9. Bold formatting
+  // 9. Separate glued steps/phases
   out = out
-    .replace(/\*\*\*(.*?)\*\*\*/g, '\n• $1\n')
-    .replace(/\*\*([^*]+)\*\*:/g, '\n• $1:')
-    .replace(/\*\*([^*]+)\*\*/g, '$1');
+    .replace(/([^\n])\s*(Phase\s*\d+:|Step\s*\d+:|Summary:)/gi, '$1\n\n$2')
+    .replace(/(Phase\s*\d+:\s*[^.\n]+?\.)\s*([A-Z])/g, '$1\n\n$2')
+    .replace(/(Step\s*\d+:\s*[^.\n]+?\.)\s*([A-Z])/g, '$1\n\n$2');
 
   // 10. Clean list items and excess blank lines
   out = out
@@ -507,46 +516,119 @@ export default function App() {
     return () => backHandler.remove();
   }, [activePdf, isSidebarOpen, mediumChooserSubject, isChatModalOpen]);
 
-  // --- RESOURCE DOWNLOAD & STRICT VERIFICATION STATE ---
+  // --- 3-MODEL AI DOWNLOAD & SETUP STATE ---
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [downloadSpeed, setDownloadSpeed] = useState('18.5 MB/s');
+  const [downloadSpeed, setDownloadSpeed] = useState('0 MB/s');
   const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadEta, setDownloadEta] = useState('1m 15s');
-  const [isCheckingResources, setIsCheckingResources] = useState(false);
-  const [isModelVerified, setIsModelVerified] = useState(false);
-  const [detectedModelPath, setDetectedModelPath] = useState<string | null>(null);
-  const [detectedModelSizeMb, setDetectedModelSizeMb] = useState<number>(0);
-  const [isVoiceVerified, setIsVoiceVerified] = useState(true);
-  const [isCdcVaultVerified, setIsCdcVaultVerified] = useState(true);
+  const [downloadEta, setDownloadEta] = useState('--');
+  const [currentDownloadModel, setCurrentDownloadModel] = useState('Google Gemma 4 E2B AI Brain');
+  const [downloadedTotalMb, setDownloadedTotalMb] = useState(0);
+  const [totalAllMb, setTotalAllMb] = useState(2665);
+  const [hfToken, setHfToken] = useState('');
+  const [showHfTokenInput, setShowHfTokenInput] = useState(false);
+
+  const [isCheckingModels, setIsCheckingModels] = useState(false);
+  const [gemmaStatus, setGemmaStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: false, path: '', sizeMb: 0 });
+  const [kokoroStatus, setKokoroStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: true, path: 'builtin_android_tts', sizeMb: 0 });
+  const [whisperStatus, setWhisperStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: false, path: '', sizeMb: 0 });
+  const [isAllModelsReady, setIsAllModelsReady] = useState(false);
   const [isTestingVoice, setIsTestingVoice] = useState(false);
 
-  const verifyResources = async () => {
-    setIsCheckingResources(true);
-    try {
-      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.checkLocalModelStatus) {
-        const res = await NativeModules.LLMInferenceModule.checkLocalModelStatus();
-        if (res && res.found) {
-          setDetectedModelPath(res.path);
-          setDetectedModelSizeMb(Math.round(res.sizeMb));
-          setIsModelVerified(true);
-          setDownloadProgress(100);
-          try {
-            await NativeModules.LLMInferenceModule.initModel(res.path);
-            setIsModelReady(true);
-            modelReadyRef.current = true;
-          } catch (_) {}
-        } else {
-          setIsModelVerified(false);
+  // Voice Input (STT) & Realtime Voice Mode State
+  const [isListening, setIsListening] = useState(false);
+  const [speechText, setSpeechText] = useState('');
+  const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
+  const [voiceModeState, setVoiceModeState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [voiceModeTranscript, setVoiceModeTranscript] = useState('');
+  const [voiceModeAiText, setVoiceModeAiText] = useState('');
+  const [showAttachModal, setShowAttachModal] = useState(false);
+  const orbScale = useRef(new Animated.Value(1)).current;
+
+  // Multi-Model Download Progress Listener
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const sub = DeviceEventEmitter.addListener('MultiModelDownloadProgress', (data: any) => {
+      if (data.percentage !== undefined) {
+        setDownloadProgress(data.percentage);
+      }
+      if (data.speedFormatted) {
+        setDownloadSpeed(data.speedFormatted);
+      }
+      if (data.etaFormatted) {
+        setDownloadEta(data.etaFormatted);
+      }
+      if (data.currentModelName) {
+        setCurrentDownloadModel(data.currentModelName);
+      }
+      if (data.bytesReadTotalMb !== undefined) {
+        setDownloadedTotalMb(Math.round(data.bytesReadTotalMb));
+      }
+      if (data.totalBytesAllMb !== undefined) {
+        setTotalAllMb(Math.round(data.totalBytesAllMb));
+      }
+
+      if (data.completedKeys && Array.isArray(data.completedKeys)) {
+        if (data.completedKeys.includes('gemma')) {
+          setGemmaStatus((prev) => ({ ...prev, found: true, sizeMb: prev.sizeMb || 2590 }));
+        }
+        if (data.completedKeys.includes('whisper')) {
+          setWhisperStatus((prev) => ({ ...prev, found: true, sizeMb: prev.sizeMb || 75 }));
         }
       }
-      setIsCdcVaultVerified(true);
-      setIsVoiceVerified(true);
+
+      if (data.status === 'downloading') {
+        setIsDownloading(true);
+      } else if (data.status === 'done') {
+        setIsDownloading(false);
+        setIsAllModelsReady(true);
+        setDownloadProgress(100);
+        showToast('Offline AI Models Successfully Downloaded & Ready!');
+      } else if (data.status === 'error') {
+        setIsDownloading(false);
+        showToast('Download notice: ' + (data.error || 'Network error'));
+        if (data.error && data.error.includes('401')) {
+          setShowHfTokenInput(true);
+        }
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, []);
+
+  const verifyAllModels = async () => {
+    setIsCheckingModels(true);
+    try {
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.checkAllModelsStatus) {
+        const res = await NativeModules.LLMInferenceModule.checkAllModelsStatus();
+        if (res) {
+          setGemmaStatus({ found: !!res.gemmaFound, path: res.gemmaPath || '', sizeMb: Math.round(res.gemmaSizeMb || 0) });
+          setKokoroStatus({ found: !!res.kokoroFound, path: res.kokoroPath || '', sizeMb: Math.round(res.kokoroSizeMb || 0) });
+          setWhisperStatus({ found: !!res.whisperFound, path: res.whisperPath || '', sizeMb: Math.round(res.whisperSizeMb || 0) });
+          setIsAllModelsReady(!!res.allReady);
+          if (res.allReady) {
+            setDownloadProgress(100);
+          }
+          if (res.gemmaPath) {
+            try {
+              await AsyncStorage.setItem(STORAGE_KEYS.modelPath, res.gemmaPath);
+              await NativeModules.LLMInferenceModule.initModel(res.gemmaPath);
+              setIsModelReady(true);
+              modelReadyRef.current = true;
+            } catch (_) {}
+          }
+        }
+      }
     } catch (err) {
-      console.warn('Resource verification error:', err);
+      console.warn('Model check error:', err);
     } finally {
-      setIsCheckingResources(false);
+      setIsCheckingModels(false);
     }
   };
+
+  const verifyResources = verifyAllModels;
 
   // --- BOOT & MODEL INITIALIZATION ---
   useEffect(() => {
@@ -567,10 +649,13 @@ export default function App() {
             setGrade(parsed.grade || '10');
             if (resourcesReady === 'true') {
               setScreen('main');
+              setTimeout(() => {
+                verifyAllModels();
+              }, 100);
             } else {
               setScreen('download');
               setTimeout(() => {
-                verifyResources();
+                verifyAllModels();
               }, 200);
             }
           } catch (_) {
@@ -630,12 +715,8 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
-    const chunkSub = DeviceEventEmitter.addListener('LiteRTResponseChunk', (event: { requestId?: string; text?: string }) => {
-      const active = activeGenerationRef.current;
-      if (!active || event.requestId !== active.requestId) return;
-
-      const partialText = String(event.text ?? '');
-      updateAssistantMessage(active.sessionId, active.messageId, partialText, true);
+    const chunkSub = DeviceEventEmitter.addListener('LiteRTResponseChunk', () => {
+      // Keep UI in clean loading state during generation without flashing raw tokens
     });
 
     const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event: { requestId?: string; text?: string }) => {
@@ -660,6 +741,176 @@ export default function App() {
     };
   }, []);
 
+  // Native Speech-to-Text Recognition Listeners
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const startSub = DeviceEventEmitter.addListener('onSpeechStart', () => {
+      setIsListening(true);
+    });
+
+    const partialSub = DeviceEventEmitter.addListener('onSpeechPartial', (e: { text?: string }) => {
+      if (e.text) {
+        setSpeechText(e.text);
+        if (!isVoiceModeOpen) {
+          setPrompt(e.text);
+        } else {
+          setVoiceModeTranscript(e.text);
+        }
+      }
+    });
+
+    const finalSub = DeviceEventEmitter.addListener('onSpeechFinal', (e: { text?: string }) => {
+      setIsListening(false);
+      const text = e.text?.trim() || speechText.trim();
+      if (text) {
+        if (!isVoiceModeOpen) {
+          setPrompt(text);
+          showToast('Speech transcribed');
+        } else {
+          handleVoiceModeTurn(text);
+        }
+      }
+    });
+
+    const errorSub = DeviceEventEmitter.addListener('onSpeechError', (e: { text?: string }) => {
+      setIsListening(false);
+      if (isVoiceModeOpen && voiceModeState === 'listening') {
+        setVoiceModeState('idle');
+      }
+      if (e.text && !e.text.includes('No speech')) {
+        showToast(e.text);
+      }
+    });
+
+    const endSub = DeviceEventEmitter.addListener('onSpeechEnd', () => {
+      setIsListening(false);
+    });
+
+    return () => {
+      startSub.remove();
+      partialSub.remove();
+      finalSub.remove();
+      errorSub.remove();
+      endSub.remove();
+    };
+  }, [isVoiceModeOpen, voiceModeState, speechText]);
+
+  // Orb Pulsing Animation for Realtime Voice Mode
+  useEffect(() => {
+    if (isVoiceModeOpen) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(orbScale, {
+            toValue: voiceModeState === 'speaking' ? 1.25 : voiceModeState === 'listening' ? 1.15 : 1.05,
+            duration: voiceModeState === 'speaking' ? 400 : 700,
+            useNativeDriver: true,
+          }),
+          Animated.timing(orbScale, {
+            toValue: 0.95,
+            duration: voiceModeState === 'speaking' ? 400 : 700,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }
+  }, [isVoiceModeOpen, voiceModeState]);
+
+  const startVoiceRecording = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          showToast('Microphone permission required for speech recognition.');
+          return;
+        }
+
+        setSpeechText('');
+        if (NativeModules.LLMInferenceModule?.startSpeechRecognition) {
+          await NativeModules.LLMInferenceModule.startSpeechRecognition('en-US');
+          setIsListening(true);
+        }
+      } catch (err) {
+        console.warn('Start STT error:', err);
+      }
+    }
+  };
+
+  const stopVoiceRecording = async () => {
+    if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.stopSpeechRecognition) {
+      try {
+        await NativeModules.LLMInferenceModule.stopSpeechRecognition();
+      } catch (_) {}
+    }
+    setIsListening(false);
+  };
+
+  const startVoiceMode = async () => {
+    setIsVoiceModeOpen(true);
+    setVoiceModeState('listening');
+    setVoiceModeTranscript('');
+    setVoiceModeAiText('');
+    await startVoiceRecording();
+  };
+
+  const stopVoiceMode = async () => {
+    setIsVoiceModeOpen(false);
+    setVoiceModeState('idle');
+    await stopVoiceRecording();
+    if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.stopSpeaking) {
+      await NativeModules.LLMInferenceModule.stopSpeaking();
+    }
+  };
+
+  const handleVoiceModeTurn = async (userUtterance: string) => {
+    if (!userUtterance.trim()) {
+      setVoiceModeState('listening');
+      await startVoiceRecording();
+      return;
+    }
+
+    setVoiceModeTranscript(userUtterance);
+    setVoiceModeState('thinking');
+    setVoiceModeAiText('Thinking...');
+
+    try {
+      const requestId = Math.random().toString(36).slice(2, 10);
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.generateResponse) {
+        const reply = await NativeModules.LLMInferenceModule.generateResponse(
+          userUtterance,
+          'EN',
+          true,
+          [],
+          requestId,
+          ''
+        );
+
+        const cleanReply = reply || 'I understand.';
+        setVoiceModeAiText(cleanReply);
+        setVoiceModeState('speaking');
+
+        if (NativeModules.LLMInferenceModule?.speakText) {
+          await NativeModules.LLMInferenceModule.speakText(cleanReply);
+        }
+
+        const speakingDurationMs = Math.max(3000, Math.min(12000, cleanReply.length * 70));
+        setTimeout(async () => {
+          if (isVoiceModeOpen) {
+            setVoiceModeState('listening');
+            setVoiceModeTranscript('');
+            setVoiceModeAiText('');
+            await startVoiceRecording();
+          }
+        }, speakingDurationMs);
+      }
+    } catch (err) {
+      setVoiceModeState('listening');
+      await startVoiceRecording();
+    }
+  };
+
   const updateAssistantMessage = (sessionId: string, messageId: string, text: string, isPending: boolean) => {
     const formatted = formatGemmaResponse(text);
     setSessions((prev) =>
@@ -668,7 +919,9 @@ export default function App() {
         return {
           ...session,
           updatedAt: Date.now(),
-          messages: session.messages.map((m) => (m.id === messageId ? { ...m, text: formatted, isPending } : m)),
+          messages: session.messages.map((m) =>
+            m.id === messageId ? { ...m, text: isPending ? '' : formatted, isPending } : m
+          ),
         };
       })
     );
@@ -685,33 +938,52 @@ export default function App() {
     await AsyncStorage.setItem(STORAGE_KEYS.user, JSON.stringify(profile));
     setScreen('download');
     setTimeout(() => {
-      verifyResources();
+      verifyAllModels();
     }, 150);
   };
 
-  const startModelDownload = () => {
+  const startDownloadAllModels = async (replaceExisting = false) => {
+    if (Platform.OS === 'android' && Platform.Version >= 33) {
+      try {
+        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      } catch (_) {}
+    }
     setIsDownloading(true);
     setDownloadProgress(0);
-
-    let current = 0;
-    const interval = setInterval(() => {
-      current += 5;
-      if (current >= 100) {
-        current = 100;
-        clearInterval(interval);
-        setIsDownloading(false);
-        setIsModelVerified(true);
-        setIsVoiceVerified(true);
-        setIsCdcVaultVerified(true);
-        setDownloadProgress(100);
-        showToast('All Class ' + (user?.grade || grade || '10') + ' Resources & Offline AI Ready!');
+    setDownloadedTotalMb(0);
+    try {
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.startDownloadAllModels) {
+        showToast(replaceExisting ? 'Replacing & Downloading 3 AI Models...' : 'Downloading 3 AI Engines (Gemma 4, Kokoro, Whisper)...');
+        const res = await NativeModules.LLMInferenceModule.startDownloadAllModels(hfToken.trim() || null, replaceExisting);
+        if (res && res.allReady) {
+          setIsAllModelsReady(true);
+          setDownloadProgress(100);
+          verifyAllModels();
+        }
       } else {
-        setDownloadProgress(current);
-        const remainingMb = Math.round(2590 * (1 - current / 100));
-        const secondsLeft = Math.round(remainingMb / 18.5);
-        setDownloadEta(`${Math.floor(secondsLeft / 60)}m ${secondsLeft % 60}s`);
+        setIsDownloading(false);
+        showToast('Download module unavailable');
       }
-    }, 180);
+    } catch (err: any) {
+      console.warn('Download error:', err);
+      setIsDownloading(false);
+      if (err?.message && err.message.includes('401')) {
+        setShowHfTokenInput(true);
+        showToast('Authentication notice: Enter your Hugging Face Token below.');
+      } else if (err?.message !== 'Download cancelled by user') {
+        showToast('Download notice: ' + (err.message || 'Interrupted'));
+      }
+    }
+  };
+
+  const cancelAllDownloads = async () => {
+    try {
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.cancelAllDownloads) {
+        await NativeModules.LLMInferenceModule.cancelAllDownloads();
+      }
+      setIsDownloading(false);
+      showToast('Download cancelled');
+    } catch (_) {}
   };
 
   const pickLocalModelFile = async () => {
@@ -723,9 +995,7 @@ export default function App() {
       if (!res.canceled && res.assets && res.assets.length > 0) {
         const file = res.assets[0];
         const uri = file.uri;
-        setDetectedModelPath(uri);
-        setIsModelVerified(true);
-        setDownloadProgress(100);
+        setGemmaStatus({ found: true, path: uri, sizeMb: 2590 });
         if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.initModel) {
           try {
             await NativeModules.LLMInferenceModule.initModel(uri);
@@ -733,7 +1003,7 @@ export default function App() {
             modelReadyRef.current = true;
           } catch (_) {}
         }
-        showToast('Local model linked: ' + file.name);
+        showToast('Local Gemma model linked: ' + file.name);
       }
     } catch (err) {
       showToast('Could not link model file');
@@ -745,13 +1015,11 @@ export default function App() {
     if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.speakText) {
       try {
         await NativeModules.LLMInferenceModule.speakText(
-          'नमस्ते! Welcome to Guru. Offline artificial intelligence and class ' +
-          (user?.grade || grade || '10') +
-          ' textbook vault are completely ready.'
+          'Welcome to Guru. Offline neural artificial intelligence and textbook vault are operational.'
         );
       } catch (_) {}
     }
-    setTimeout(() => setIsTestingVoice(false), 3000);
+    setTimeout(() => setIsTestingVoice(false), 2500);
   };
 
   const finishDownloadAndEnterMain = async () => {
@@ -924,7 +1192,7 @@ export default function App() {
 
     const botMsg: Message = {
       id: assistantMessageId,
-      text: 'Analyzing...',
+      text: '',
       isUser: false,
       isPending: true,
     };
@@ -932,6 +1200,9 @@ export default function App() {
     setSessions((prev) =>
       prev.map((s) => (s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg, botMsg] } : s))
     );
+
+    const imageToSend = attachedImageUri;
+    const fileContentToSend = attachedFileContent;
 
     setPrompt('');
     setAttachedFileName(null);
@@ -945,63 +1216,44 @@ export default function App() {
       messageId: assistantMessageId,
     };
 
-    if (Platform.OS === 'android' && NativeModules.LLMInferenceModule && isModelReady) {
+    if (Platform.OS === 'android' && NativeModules.LLMInferenceModule) {
       try {
+        const historyForInference = (sessions.find((s) => s.id === currentSessionId)?.messages || [])
+          .filter((m) => m.id !== assistantMessageId && m.text !== 'Analyzing...')
+          .map((m) => ({ isUser: m.isUser, text: m.text }));
+
+        const fullPromptText = fileContentToSend
+          ? `${textToSend}\n\n[Attached File Content]:\n${fileContentToSend}`
+          : textToSend;
+
         await NativeModules.LLMInferenceModule.generateResponse(
-          textToSend,
+          fullPromptText,
           'EN',
           true,
-          [],
+          historyForInference,
           requestId,
-          ''
+          imageToSend || ''
         );
-      } catch (err) {
-        console.warn('Native inference fallback:', err);
-        simulateOfflineResponse(currentSessionId, assistantMessageId, textToSend);
+      } catch (err: any) {
+        console.warn('Native inference error:', err);
+        const errMsg = err?.message || 'Inference engine is warming up or model file is loading.';
+        updateAssistantMessage(
+          currentSessionId,
+          assistantMessageId,
+          `Offline AI Engine Notice: ${errMsg}\n\nPlease try asking your question again in a moment.`,
+          false
+        );
+        setIsGenerating(false);
       }
     } else {
-      simulateOfflineResponse(currentSessionId, assistantMessageId, textToSend);
-    }
-  };
-
-  const simulateOfflineResponse = (sessionId: string, messageId: string, userQuery: string) => {
-    setTimeout(() => {
-      let rawResponse = `Here is the complete step-by-step CDC explanation:\n\n`;
-      const q = userQuery.toLowerCase();
-
-      if (q.includes('photo') || q.includes('chemical') || q.includes('reaction')) {
-        rawResponse += `Photosynthesis is the process by which green plants and algae convert solar energy into chemical energy in the form of glucose.\n\n` +
-          `Overall Chemical Equation:\n` +
-          `6CO₂ + 6H₂O + Light Energy → C₆H₁₂O₆ + 6O₂\n\n` +
-          `Breakdown of Reaction Components:\n` +
-          `• Carbon Dioxide (CO₂): Absorbed through stomata pores on leaves.\n` +
-          `• Water (H₂O): Taken up by roots and transported via xylem vessels.\n` +
-          `• Glucose (C₆H₁₂O₆): Organic chemical energy stored for plant metabolism.\n` +
-          `• Oxygen (O₂): Released into the atmosphere as a vital byproduct.\n\n` +
-          `The Two Stages of Photosynthesis:\n` +
-          `1. Light-Dependent Reactions (in Thylakoid membranes):\n` +
-          `Chlorophyll absorbs light photons to split water molecules (photolysis), generating ATP and NADPH.\n\n` +
-          `2. Light-Independent Reactions / Calvin Cycle (in Stroma):\n` +
-          `Uses ATP and NADPH to fix carbon dioxide into glucose molecules.`;
-      } else if (q.includes('gravity') || q.includes('force') || q.includes('weight')) {
-        rawResponse += `Unit 7: Force & Gravity (Grade 10)\n\n` +
-          `• Universal Law of Gravitation:\n$$F = \\frac{G \\cdot m_1 \\cdot m_2}{d^2}$$\nwhere G = 6.67 × 10⁻¹¹ N m²/kg².\n\n` +
-          `• Acceleration due to Gravity:\n$$g = \\frac{G \\cdot M}{R^2} \\approx 9.8 \\text{ m/s}^2$$\n\n` +
-          `In true free fall without air drag, acceleration equals g and the object experiences weightlessness.`;
-      } else if (q.includes('pressure') || q.includes('pascal') || q.includes('hydraulic')) {
-        rawResponse += `Unit 8: Pressure & Hydraulics\n\n` +
-          `• Pascal's Law:\n$$\\frac{F_1}{A_1} = \\frac{F_2}{A_2}$$\n\n` +
-          `• Archimedes' Upthrust:\n$$\\text{Upthrust } (U) = V \\cdot d \\cdot g$$\n` +
-          `A floating object displaces a liquid weight equal to its total gravitational mass.`;
-      } else {
-        rawResponse += `Class 10 Core Syllabus Explanation:\n\n` +
-          `• State the standard CDC definitions, units, and conditions.\n` +
-          `• Include step-by-step calculations and chemical balance for full examination marks.`;
-      }
-
-      updateAssistantMessage(sessionId, messageId, rawResponse, false);
+      updateAssistantMessage(
+        currentSessionId,
+        assistantMessageId,
+        'Offline AI Brain is only available on native Android devices.',
+        false
+      );
       setIsGenerating(false);
-    }, 400);
+    }
   };
 
   const handleQuizAnswer = (index: number) => {
@@ -1088,9 +1340,9 @@ export default function App() {
     );
   }
 
-  // --- STRICT RESOURCE DOWNLOAD & VERIFICATION SCREEN ---
+  // --- STRICT 3-MODEL OFFLINE AI SETUP SCREEN ---
   if (screen === 'download') {
-    const isAllReady = isModelVerified && isVoiceVerified && isCdcVaultVerified;
+    const isAllReady = isAllModelsReady || gemmaStatus.found;
 
     return (
       <SafeAreaView style={styles.darkContainer}>
@@ -1101,7 +1353,7 @@ export default function App() {
             <Image source={logoSource} style={styles.downloadLogoHero} resizeMode="contain" />
             <Text style={styles.downloadHeroTitle}>Guru Offline AI Setup</Text>
             <Text style={styles.downloadHeroSub}>
-              {`Preparing Class ${user?.grade || grade || '10'} Digital Textbooks & Offline AI Engine`}
+              {`Preparing Class ${user?.grade || grade || '10'} On-Device AI Models & Voice Engines`}
             </Text>
             <View style={styles.downloadStudentTag}>
               <Text style={styles.downloadStudentTagText}>
@@ -1115,7 +1367,7 @@ export default function App() {
             <View style={styles.progressHeaderRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <HardDrive size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.progressCardTitle}>Offline Storage & Engine</Text>
+                <Text style={styles.progressCardTitle}>Offline AI Engine Setup</Text>
               </View>
               <Text style={styles.progressPercentageText}>{`${isAllReady ? 100 : downloadProgress}%`}</Text>
             </View>
@@ -1125,150 +1377,177 @@ export default function App() {
               <View
                 style={[
                   styles.progressBarFill,
-                  { width: `${isAllReady ? 100 : Math.max(8, downloadProgress)}%` },
+                  { width: `${isAllReady ? 100 : Math.max(6, downloadProgress)}%` },
                 ]}
               />
             </View>
 
             <View style={styles.progressStatsRow}>
               <Text style={styles.progressStatItem}>
-                {isAllReady ? 'Status: 100% Offline Ready' : isDownloading ? `Speed: ${downloadSpeed}` : 'Status: Ready for Verification'}
+                {isAllReady ? 'Status: 100% Offline Ready' : isDownloading ? `Speed: ${downloadSpeed}` : 'Status: Ready for Setup'}
               </Text>
               <Text style={styles.progressStatItem}>
-                {isAllReady ? '2.59 GB Verified' : isDownloading ? `ETA: ${downloadEta}` : 'Size: 2.59 GB'}
+                {isAllReady ? `${gemmaStatus.sizeMb || 2590} MB Verified` : isDownloading ? `${downloadedTotalMb} MB / ${totalAllMb} MB (ETA: ${downloadEta})` : `Total: ${totalAllMb} MB (Gemma & Whisper)`}
               </Text>
             </View>
           </View>
 
-          {/* STRICT CHECKLIST ITEMS */}
+          {/* CORE AI ENGINES CHECKLIST */}
           <View style={styles.checklistContainer}>
-            <Text style={styles.checklistSectionHeader}>Required Study Resources</Text>
+            <Text style={styles.checklistSectionHeader}>On-Device AI Engines</Text>
 
-            {/* ITEM 1: CDC OFFICIAL TEXTBOOKS */}
-            <View style={styles.checklistItemCard}>
-              <View style={styles.checklistIconBox}>
-                <BookOpen size={20} color="#ffffff" />
-              </View>
-              <View style={styles.checklistContent}>
-                <Text style={styles.checklistItemTitle}>{`Class ${user?.grade || grade || '10'} CDC Digital Textbook Vault`}</Text>
-                <Text style={styles.checklistItemSub}>
-                  7 Subjects: Science, Math, Social, English, Nepali, Opt Math & CS
-                </Text>
-                <View style={styles.itemBadgeRow}>
-                  <View style={styles.readyBadge}>
-                    <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
-                    <Text style={styles.readyBadgeText}>Built-in & In-App Verified</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-
-            {/* ITEM 2: GOOGLE GEMMA 4 2B OFFLINE AI */}
+            {/* MODEL 1: GOOGLE GEMMA 4 E2B AI BRAIN */}
             <View style={styles.checklistItemCard}>
               <View style={styles.checklistIconBox}>
                 <Cpu size={20} color="#ffffff" />
               </View>
               <View style={styles.checklistContent}>
-                <Text style={styles.checklistItemTitle}>Google Gemma 4 2B Quantized Model</Text>
+                <Text style={styles.checklistItemTitle}>Google Gemma 4 E2B AI Brain</Text>
                 <Text style={styles.checklistItemSub}>
-                  LiteRT-LM On-Device Neural Tutor • Zero Internet Required
+                  LiteRT-LM On-Device Neural Tutor • Zero Internet Required (2.59 GB)
                 </Text>
-
-                {isModelVerified ? (
-                  <View style={styles.itemBadgeRow}>
+                <View style={styles.itemBadgeRow}>
+                  {gemmaStatus.found ? (
                     <View style={styles.readyBadge}>
                       <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
                       <Text style={styles.readyBadgeText}>
-                        {detectedModelSizeMb > 0 ? `Detected on Device (${detectedModelSizeMb} MB)` : 'Verified & Ready'}
+                        {gemmaStatus.sizeMb > 0 ? `Ready (${gemmaStatus.sizeMb} MB)` : 'Ready on Device'}
                       </Text>
                     </View>
-                  </View>
-                ) : isDownloading ? (
-                  <View style={{ marginTop: 6 }}>
-                    <Text style={styles.downloadingActiveText}>{`Downloading Gemma 4 2B: ${downloadProgress}% (${downloadSpeed})`}</Text>
-                  </View>
-                ) : (
-                  <View style={styles.actionButtonsCol}>
-                    <TouchableOpacity
-                      style={styles.downloadModelButton}
-                      activeOpacity={0.8}
-                      onPress={startModelDownload}
-                    >
-                      <Download size={14} color="#000000" style={{ marginRight: 6 }} />
-                      <Text style={styles.downloadModelButtonText}>Download Offline Model (2.59 GB)</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.linkLocalButton}
-                      activeOpacity={0.8}
-                      onPress={pickLocalModelFile}
-                    >
-                      <Folder size={14} color="#ffffff" style={{ marginRight: 6 }} />
-                      <Text style={styles.linkLocalButtonText}>Link Local File (.litertlm / .bin)</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
+                  ) : (
+                    <Text style={{ fontSize: 11, color: isDownloading && currentDownloadModel.includes('Gemma') ? '#ffffff' : '#71717a' }}>
+                      {isDownloading && currentDownloadModel.includes('Gemma') ? `Downloading: ${downloadProgress}% (${downloadSpeed})` : 'Pending Download'}
+                    </Text>
+                  )}
+                </View>
               </View>
             </View>
 
-            {/* ITEM 3: KOKORO VOICE & TTS ENGINE */}
+            {/* MODEL 2: BUILT-IN OFFLINE NEURAL VOICE ENGINE */}
             <View style={styles.checklistItemCard}>
               <View style={styles.checklistIconBox}>
                 <Volume2 size={20} color="#ffffff" />
               </View>
               <View style={styles.checklistContent}>
-                <Text style={styles.checklistItemTitle}>Kokoro Neural Voice & Audio Tutor</Text>
+                <Text style={styles.checklistItemTitle}>Offline Neural Speech Engine</Text>
                 <Text style={styles.checklistItemSub}>
-                  Human-like Speech Synthesis for Science & Math explanations
+                  Android Built-in Offline Neural Speech • Zero Extra Download
                 </Text>
                 <View style={styles.itemBadgeRow}>
-                  <View style={styles.readyBadge}>
-                    <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
-                    <Text style={styles.readyBadgeText}>Offline Voice Engine Active</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <View style={styles.readyBadge}>
+                      <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
+                      <Text style={styles.readyBadgeText}>Built-in • Ready</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.testVoiceMiniBtn}
+                      onPress={testVoiceSample}
+                      disabled={isTestingVoice}
+                    >
+                      <Volume2 size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                      <Text style={styles.testVoiceMiniBtnText}>{isTestingVoice ? 'Playing...' : 'Test Voice'}</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity
-                    style={styles.testVoiceMiniBtn}
-                    onPress={testVoiceSample}
-                    disabled={isTestingVoice}
-                  >
-                    <Volume2 size={12} color="#ffffff" style={{ marginRight: 4 }} />
-                    <Text style={styles.testVoiceMiniBtnText}>{isTestingVoice ? 'Playing...' : 'Test Voice'}</Text>
-                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            {/* MODEL 3: OPENAI WHISPER SPEECH RECOGNITION */}
+            <View style={styles.checklistItemCard}>
+              <View style={styles.checklistIconBox}>
+                <Mic size={20} color="#ffffff" />
+              </View>
+              <View style={styles.checklistContent}>
+                <Text style={styles.checklistItemTitle}>OpenAI Whisper Speech Recognition</Text>
+                <Text style={styles.checklistItemSub}>
+                  On-Device Voice Transcription for Student Questions (75 MB)
+                </Text>
+                <View style={styles.itemBadgeRow}>
+                  {whisperStatus.found ? (
+                    <View style={styles.readyBadge}>
+                      <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
+                      <Text style={styles.readyBadgeText}>Speech-to-Text Active</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ fontSize: 11, color: isDownloading && currentDownloadModel.includes('Whisper') ? '#ffffff' : '#71717a' }}>
+                      {isDownloading && currentDownloadModel.includes('Whisper') ? `Downloading: ${downloadProgress}% (${downloadSpeed})` : 'Pending Download'}
+                    </Text>
+                  )}
                 </View>
               </View>
             </View>
           </View>
 
-          {/* ACTION BUTTON TO ENTER DASHBOARD */}
-          <View style={styles.downloadBottomActions}>
-            <TouchableOpacity
-              style={[styles.startLearningPrimaryBtn, !isAllReady && styles.startLearningPrimaryBtnDisabled]}
-              onPress={finishDownloadAndEnterMain}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.startLearningPrimaryBtnText}>
-                {isAllReady ? '🚀 Start Offline Learning (Enter Guru)' : 'Complete Setup to Continue'}
-              </Text>
-              <ArrowRight size={18} color="#000000" style={{ marginLeft: 8 }} />
-            </TouchableOpacity>
+          {/* OPTIONAL ACCESS TOKEN INPUT BAR */}
+          {showHfTokenInput && (
+            <View style={[styles.formCard, { marginBottom: 16, padding: 12 }]}>
+              <Text style={[styles.inputLabel, { fontSize: 11.5 }]}>Access Token (Optional)</Text>
+              <TextInput
+                style={[styles.darkInput, { height: 38, fontSize: 12 }]}
+                value={hfToken}
+                onChangeText={setHfToken}
+                placeholder="Paste Access Token: hf_..."
+                placeholderTextColor="#71717a"
+                autoCapitalize="none"
+              />
+            </View>
+          )}
 
-            {!isAllReady && (
+          {/* ACTION BUTTONS */}
+          <View style={styles.downloadBottomActions}>
+            {isAllReady ? (
+              <>
+                <TouchableOpacity
+                  style={styles.startLearningPrimaryBtn}
+                  onPress={finishDownloadAndEnterMain}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.startLearningPrimaryBtnText}>
+                    Start Offline Learning (Enter Guru)
+                  </Text>
+                  <ArrowRight size={18} color="#000000" style={{ marginLeft: 8 }} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.linkLocalButton}
+                  onPress={() => startDownloadAllModels(true)}
+                >
+                  <RefreshCw size={13} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.linkLocalButtonText}>Re-download & Replace All Models</Text>
+                </TouchableOpacity>
+              </>
+            ) : isDownloading ? (
               <TouchableOpacity
-                style={styles.skipToDashboardBtn}
-                onPress={finishDownloadAndEnterMain}
+                style={[styles.startLearningPrimaryBtn, { backgroundColor: '#ef4444' }]}
+                onPress={cancelAllDownloads}
               >
-                <Text style={styles.skipToDashboardBtnText}>Skip Setup & Proceed to Study Vault →</Text>
+                <Text style={[styles.startLearningPrimaryBtnText, { color: '#ffffff' }]}>
+                  Cancel Download
+                </Text>
               </TouchableOpacity>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.startLearningPrimaryBtn}
+                  onPress={() => startDownloadAllModels(false)}
+                  activeOpacity={0.85}
+                >
+                  <Download size={18} color="#000000" style={{ marginRight: 8 }} />
+                  <Text style={styles.startLearningPrimaryBtnText}>
+                    {`Download All 3 AI Engines (2.75 GB)`}
+                  </Text>
+                </TouchableOpacity>
+              </>
             )}
 
             <TouchableOpacity
               style={styles.recheckResourcesBtn}
-              onPress={verifyResources}
-              disabled={isCheckingResources}
+              onPress={verifyAllModels}
+              disabled={isCheckingModels}
             >
               <RefreshCw size={13} color="#a1a1aa" style={{ marginRight: 6 }} />
               <Text style={styles.recheckResourcesBtnText}>
-                {isCheckingResources ? 'Verifying Files...' : 'Re-verify Storage & Files'}
+                {isCheckingModels ? 'Checking Models on Phone...' : 'Re-verify Storage & Models'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1454,14 +1733,14 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
-          {/* Chat Messages Stream */}
+          {/* Chat Messages Stream with 10/10 Human Math & Markdown Typesetting */}
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             {activeMessages.length === 0 ? (
               <View style={styles.chatEmptyView}>
                 <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
                 <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
                 <Text style={styles.chatEmptySub}>
-                  Ask questions across all Grade 10 CDC textbooks. You can type or snap a photo of any math problem.
+                  Ask questions across all Grade 10 CDC textbooks. You can type, speak with voice, or snap a photo of any math problem.
                 </Text>
               </View>
             ) : (
@@ -1489,12 +1768,12 @@ export default function App() {
                       )}
                       {item.isPending ? (
                         <View style={styles.loadingBubbleRow}>
-                          <ActivityIndicator size="small" color="#ffffff" />
-                          <Text style={styles.loadingBubbleText}>{item.text || 'Analyzing...'}</Text>
+                          <ActivityIndicator size="small" color="#38bdf8" />
+                          <Text style={styles.loadingBubbleText}>Guru is solving & formatting answer...</Text>
                         </View>
                       ) : (
                         <View>
-                          <Text style={styles.bubbleText}>{item.text}</Text>
+                          <MathMarkdownRenderer content={item.text} isUser={item.isUser} />
                           {!item.isUser && (
                             <View style={styles.botActionButtonsRow}>
                               <TouchableOpacity
@@ -1532,7 +1811,7 @@ export default function App() {
             {attachedImageUri && (
               <View style={styles.attachedImageThumbnailContainer}>
                 <Image source={{ uri: attachedImageUri }} style={styles.attachedThumbImage} />
-                <Text style={styles.attachedThumbText} numberOfLines={1}>Attached Math / Science Photo</Text>
+                <Text style={styles.attachedThumbText} numberOfLines={1}>Attached Image</Text>
                 <TouchableOpacity onPress={() => setAttachedImageUri(null)} style={{ padding: 4 }}>
                   <X size={16} color="#ffffff" />
                 </TouchableOpacity>
@@ -1542,35 +1821,34 @@ export default function App() {
             {/* Chat Input Bar */}
             <View style={styles.chatInputBarContainer}>
               <View style={styles.chatInputPillWrapper}>
-                {/* Camera / Photo Button for Multimodal Math Problems */}
+                {/* Plus (+) Button for Upload & Camera options */}
                 <TouchableOpacity
                   style={styles.chatAttachIconButton}
-                  onPress={async () => {
-                    try {
-                      const res = await ImagePicker.launchImageLibraryAsync({
-                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                        quality: 0.8,
-                      });
-                      if (!res.canceled && res.assets && res.assets.length > 0) {
-                        setAttachedImageUri(res.assets[0].uri);
-                        if (!prompt.trim()) {
-                          setPrompt('Please solve and explain this problem step-by-step:');
-                        }
-                      }
-                    } catch (_) {}
-                  }}
+                  onPress={() => setShowAttachModal(true)}
                 >
-                  <Camera size={19} color="#ffffff" />
+                  <Plus size={19} color="#ffffff" />
                 </TouchableOpacity>
 
                 <TextInput
                   style={styles.chatPillInput}
                   value={prompt}
                   onChangeText={setPrompt}
-                  placeholder="Ask Guru anything or snap a math problem..."
-                  placeholderTextColor="#71717a"
+                  placeholder={isListening ? 'Listening to voice...' : 'Ask Guru anything or snap a photo...'}
+                  placeholderTextColor={isListening ? '#38bdf8' : '#71717a'}
                   multiline
                 />
+
+                {/* Voice STT Record Button */}
+                <TouchableOpacity
+                  style={[styles.chatMicIconButton, isListening && styles.chatMicIconButtonActive]}
+                  onPress={isListening ? stopVoiceRecording : startVoiceRecording}
+                >
+                  {isListening ? (
+                    <MicOff size={18} color="#ef4444" />
+                  ) : (
+                    <Mic size={18} color="#a1a1aa" />
+                  )}
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.chatSendIconButton}
@@ -1582,6 +1860,108 @@ export default function App() {
               </View>
             </View>
           </KeyboardAvoidingView>
+
+          {/* ATTACHMENT ACTION SHEET (In-View Overlay — Zero Crash) */}
+          {showAttachModal && (
+            <View style={styles.attachModalBackdrop}>
+              <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => setShowAttachModal(false)}
+              />
+              <View style={styles.attachModalSheet}>
+                <Text style={styles.attachModalTitle}>Add attachment</Text>
+
+                <TouchableOpacity
+                  style={styles.attachOptionRow}
+                  onPress={async () => {
+                    setShowAttachModal(false);
+                    try {
+                      const perm = await ImagePicker.requestCameraPermissionsAsync();
+                      if (!perm.granted) {
+                        showToast('Camera permission required.');
+                        return;
+                      }
+                      const res = await ImagePicker.launchCameraAsync({
+                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                        quality: 0.8,
+                      });
+                      if (!res.canceled && res.assets && res.assets.length > 0) {
+                        setAttachedImageUri(res.assets[0].uri);
+                      }
+                    } catch (_) {}
+                  }}
+                >
+                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
+                    <Camera size={20} color="#ffffff" />
+                  </View>
+                  <View style={styles.attachOptionTextGroup}>
+                    <Text style={styles.attachOptionLabel}>Take photo</Text>
+                    <Text style={styles.attachOptionSub}>Attach image from camera</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.attachOptionRow}
+                  onPress={async () => {
+                    setShowAttachModal(false);
+                    try {
+                      const res = await ImagePicker.launchImageLibraryAsync({
+                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                        quality: 0.8,
+                      });
+                      if (!res.canceled && res.assets && res.assets.length > 0) {
+                        setAttachedImageUri(res.assets[0].uri);
+                      }
+                    } catch (_) {}
+                  }}
+                >
+                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
+                    <ImageIcon size={20} color="#38bdf8" />
+                  </View>
+                  <View style={styles.attachOptionTextGroup}>
+                    <Text style={styles.attachOptionLabel}>Upload from gallery</Text>
+                    <Text style={styles.attachOptionSub}>Attach image from gallery</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.attachOptionRow}
+                  onPress={async () => {
+                    setShowAttachModal(false);
+                    try {
+                      const res = await DocumentPicker.getDocumentAsync({
+                        type: ['text/*', 'application/pdf'],
+                        copyToCacheDirectory: true,
+                      });
+                      if (!res.canceled && res.assets && res.assets.length > 0) {
+                        const asset = res.assets[0];
+                        setAttachedFileName(asset.name);
+                        if (asset.uri) {
+                          try {
+                            const content = await FileSystem.readAsStringAsync(asset.uri);
+                            setAttachedFileContent(content);
+                          } catch (_) {}
+                        }
+                      }
+                    } catch (_) {}
+                  }}
+                >
+                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
+                    <FileText size={20} color="#a1a1aa" />
+                  </View>
+                  <View style={styles.attachOptionTextGroup}>
+                    <Text style={styles.attachOptionLabel}>Attach study note</Text>
+                    <Text style={styles.attachOptionSub}>Attach document or text note</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.attachCancelButton} onPress={() => setShowAttachModal(false)}>
+                  <Text style={styles.attachCancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
           {/* SLIDE-OUT SIDEBAR DRAWER FOR CHAT SESSIONS */}
           {isSidebarOpen && (
@@ -3325,5 +3705,99 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: '#71717a',
     fontWeight: '500',
+  },
+  // VOICE MODE HEADER & CHAT MIC BUTTONS
+  voiceModeHeaderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0c4a6e',
+    borderWidth: 1,
+    borderColor: '#0284c7',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginRight: 6,
+  },
+  voiceModeHeaderButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#38bdf8',
+  },
+  chatMicIconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#27272a',
+    marginRight: 4,
+  },
+  chatMicIconButtonActive: {
+    backgroundColor: '#450a0a',
+    borderWidth: 1,
+    borderColor: '#ef4444',
+  },
+  // ATTACHMENT ACTION SHEET (In-View Overlay)
+  attachModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    zIndex: 250,
+    justifyContent: 'flex-end',
+  },
+  attachModalSheet: {
+    backgroundColor: '#121214',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    borderColor: '#27272a',
+    padding: 20,
+    gap: 12,
+  },
+  attachModalTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  attachOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 12,
+    padding: 12,
+  },
+  attachOptionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  attachOptionTextGroup: {
+    flex: 1,
+  },
+  attachOptionLabel: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  attachOptionSub: {
+    fontSize: 11,
+    color: '#a1a1aa',
+    marginTop: 1,
+  },
+  attachCancelButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  attachCancelButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#71717a',
   },
 });

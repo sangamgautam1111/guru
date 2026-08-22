@@ -18,13 +18,38 @@ import com.google.ai.edge.litertlm.ResponseCallback
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.Session
 import com.google.ai.edge.litertlm.SessionConfig
+import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
+import java.nio.FloatBuffer
+import java.nio.LongBuffer
+import android.os.Environment
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
@@ -217,18 +242,76 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
     }
 
     /**
+     * On-Device OCR Text Extraction using Google ML Kit Vision.
+     * Extracts text, problem numbers, formulas, and questions from attached textbook/exam images.
+     */
+    private fun extractTextFromImageUriOrPath(imagePathOrUri: String): String {
+        if (imagePathOrUri.isBlank()) return ""
+        try {
+            val context = reactApplicationContext
+            val bitmap: Bitmap? = when {
+                imagePathOrUri.startsWith("content://") || imagePathOrUri.startsWith("file://") -> {
+                    val uri = Uri.parse(imagePathOrUri)
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    }
+                }
+                imagePathOrUri.startsWith("/") -> {
+                    BitmapFactory.decodeFile(imagePathOrUri)
+                }
+                else -> {
+                    try {
+                        val decodedBytes = android.util.Base64.decode(imagePathOrUri, android.util.Base64.DEFAULT)
+                        BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
+
+            if (bitmap == null) {
+                Log.w(tag, "Could not decode bitmap from: $imagePathOrUri")
+                return ""
+            }
+
+            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            val result = Tasks.await(recognizer.process(inputImage), 15, TimeUnit.SECONDS)
+            recognizer.close()
+
+            val extracted = result.text.trim()
+            Log.d(tag, "OCR extracted ${extracted.length} chars from image")
+            return extracted
+        } catch (e: Exception) {
+            Log.e(tag, "OCR text recognition error: ${e.message}", e)
+            return ""
+        }
+    }
+
+    /**
      * Official Gemma Instruction-Tuning Chat Template.
      * Gemma requires explicit turn boundaries to know when user input ends and model output begins.
-     * Without these tokens, the base model hallucinates synthetic multi-turn dialogues.
+     * Embeds Guru's teacher identity created by Sangam Gautam for Nepal Class 8 BLE, 9, 10 SEE.
      */
     private fun buildEffectivePrompt(prompt: String, language: String, isMathRequest: Boolean, history: ReadableArray): String {
         val sb = StringBuilder()
-        val startIndex = maxOf(0, history.size() - maxHistoryMessages)
+
+        val systemPrompt = "You are Guru, an expert, kind, and brilliant AI teacher and tutor created by Sangam Gautam for students in Nepal preparing for Class 8 BLE, Class 9, and Class 10 SEE exams. You teach Compulsory Mathematics, Science & Technology, Social Studies, English, Optional Math, and Nepali with crystal-clear step-by-step solutions. Always answer the question directly, clearly, and concisely. Never say 'Namaste' or repeat greetings at the beginning of your answers. Never mention you are a generic language model. Use structured markdown headings like '### Phase 1:' or '### Step 1:' with clean line breaks."
+
+        sb.append("<start_of_turn>user\n").append(systemPrompt).append("<end_of_turn>\n")
+        sb.append("<start_of_turn>model\n").append("Understood. I am Guru, your AI tutor for Class 8 BLE, Class 9, and Class 10 SEE. I will provide direct, structured, step-by-step solutions and explanations without repetitive greetings.").append("<end_of_turn>\n")
+
+        val startIndex = maxOf(0, history.size() - 4) // Retain last 4 messages
 
         for (index in startIndex until history.size()) {
             val item = history.getMap(index) ?: continue
-            val text = item.getString("text")?.trim().orEmpty()
-            if (text.isBlank()) continue
+            var text = item.getString("text")?.trim().orEmpty()
+            if (text.isBlank() || text == "Analyzing...") continue
+
+            // Cap individual history turn size to protect token budget on mobile
+            if (text.length > 350) {
+                text = text.take(350) + "..."
+            }
 
             val isUser = item.getBoolean("isUser")
             if (isUser) {
@@ -286,10 +369,19 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             }
         }
 
-        return cleanedLines.joinToString("\n")
+        var result = cleanedLines.joinToString("\n")
             .replace(Regex("\n{3,}"), "\n\n")
             .replace(Regex("^(?:#\\s*)?(?:answer|response|reply|explanation)\\s*:?\\s*", RegexOption.IGNORE_CASE), "")
             .trim()
+
+        // Strip leading greetings so every response starts directly with the solution
+        result = result
+            .replace(Regex("(?i)^\\s*namaste[!,.:\\s-]*"), "")
+            .replace(Regex("(?i)^\\s*hello[!,.:\\s-]*"), "")
+            .replace(Regex("(?i)^\\s*hi[!,.:\\s-]*"), "")
+            .trim()
+
+        return result
     }
 
     /**
@@ -411,143 +503,120 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
      * - OPPO A18 (Helio G85, Mali-G52): GPU drivers are unstable → falls back to CPU safely
      * - Both paths produce identical tutoring quality; only speed differs.
      */
+    private fun findGemmaModelFile(): File? {
+        val context = reactApplicationContext
+        val targetDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: File(Environment.getExternalStorageDirectory(), "Download").takeIf { it.exists() && it.canWrite() }
+            ?: context.filesDir
+
+        val candidateFiles = listOf(
+            File(targetDir, "gemma-4-E2B-it.litertlm"),
+            File(targetDir, "gemma-2b-it-cpu-int4.litertlm"),
+            File("/storage/emulated/0/Download/gemma-4-E2B-it.litertlm"),
+            File("/storage/emulated/0/Download/gemma-2b-it-cpu-int4.litertlm"),
+            File(context.filesDir, "gemma-4-E2B-it.litertlm")
+        )
+        return candidateFiles.firstOrNull { it.exists() && it.length() > 500L * 1024L * 1024L }
+    }
+
+    @Synchronized
+    private fun ensureModelInitialized(preferredPath: String? = null): Boolean {
+        if (engine != null && !loadedModelPath.isNullOrBlank()) {
+            return true
+        }
+
+        val rawPath = preferredPath ?: findGemmaModelFile()?.absolutePath
+        if (rawPath.isNullOrBlank()) {
+            Log.w(tag, "No valid Gemma model file found on device.")
+            return false
+        }
+
+        val resolvedPath = if (rawPath.startsWith("file://")) {
+            Uri.parse(rawPath).path ?: rawPath
+        } else {
+            rawPath
+        }
+
+        val modelFile = File(resolvedPath)
+        val validationError = validateModelFile(modelFile)
+        if (validationError != null) {
+            Log.w(tag, "Model validation failed: $validationError")
+            return false
+        }
+
+        val fileSizeMb = modelFile.length() / (1024L * 1024L)
+        Log.d(tag, "Initializing Gemma model from: $resolvedPath ($fileSizeMb MB)")
+
+        try {
+            closeSession()
+            ensureNativeLibraryLoaded()
+            Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
+
+            val maxTokens = getMaxModelTokens()
+            val cacheDir = reactApplicationContext.cacheDir.absolutePath
+
+            // Try GPU first for fast inference, fall back to CPU if unsupported
+            try {
+                Log.d(tag, "Attempting GPU backend for faster inference...")
+                val gpuConfig = EngineConfig(
+                    modelPath = resolvedPath,
+                    backend = Backend.GPU(),
+                    maxNumTokens = maxTokens,
+                    cacheDir = cacheDir,
+                )
+                val gpuEngine = Engine(gpuConfig)
+                gpuEngine.initialize()
+
+                val gpuVerify = gpuEngine.createSession(
+                    SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
+                )
+                gpuVerify.close()
+
+                engine = gpuEngine
+                loadedModelPath = resolvedPath
+                activeBackendType = "GPU"
+                Log.d(tag, "[OK] GPU backend initialized successfully")
+                return true
+            } catch (gpuError: Exception) {
+                Log.w(tag, "GPU backend unavailable (${gpuError.message}), falling back to CPU")
+
+                val cpuConfig = EngineConfig(
+                    modelPath = resolvedPath,
+                    backend = Backend.CPU(),
+                    maxNumTokens = maxTokens,
+                    cacheDir = cacheDir,
+                )
+                val cpuEngine = Engine(cpuConfig)
+                cpuEngine.initialize()
+
+                val cpuVerify = cpuEngine.createSession(
+                    SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
+                )
+                cpuVerify.close()
+
+                engine = cpuEngine
+                loadedModelPath = resolvedPath
+                activeBackendType = "CPU"
+                Log.d(tag, "[OK] CPU backend initialized successfully")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to initialize LiteRT-LM engine: ${e.message}", e)
+            closeSession()
+            return false
+        }
+    }
+
     @ReactMethod
     fun initModel(modelPath: String, promise: Promise) {
         worker.execute {
             try {
-                // --- Stage 1: Resolve the model file path ---
-                val resolvedPath = if (modelPath.startsWith("file://")) {
-                    Uri.parse(modelPath).path
+                val success = ensureModelInitialized(modelPath)
+                if (success) {
+                    promise.resolve(true)
                 } else {
-                    modelPath
+                    promise.reject("INIT_ERROR", "Failed to initialize LiteRT-LM model from: $modelPath")
                 }
-
-                if (resolvedPath.isNullOrBlank()) {
-                    promise.reject("MODEL_ERROR", "Invalid LiteRT-LM model path: $modelPath")
-                    return@execute
-                }
-
-                // --- Stage 2: Validate model file integrity ---
-                val modelFile = File(resolvedPath)
-                val validationError = validateModelFile(modelFile)
-                if (validationError != null) {
-                    promise.reject("MODEL_ERROR", validationError)
-                    return@execute
-                }
-
-                val fileSizeMb = modelFile.length() / (1024L * 1024L)
-                Log.d(tag, "Model file validated: ${resolvedPath} (${fileSizeMb} MB)")
-
-                // --- Stage 3: Pre-flight memory pressure check ---
-                val availableGb = getAvailableMemoryGb()
-                Log.d(tag, "Available device RAM: ${"%.2f".format(availableGb)} GB")
-                if (availableGb < 1.2) {
-                    Log.w(tag, "Low memory warning: ${availableGb} GB available. Model loading may be unstable.")
-                    // We don't block — some phones report low but still survive.
-                    // The warning helps debug OOM crashes if they occur.
-                }
-
-                // --- Stage 4: Teardown any previous engine ---
-                closeSession()
-                ensureNativeLibraryLoaded()
-                Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
-
-                val maxTokens = getMaxModelTokens()
-                val cacheDir = reactApplicationContext.cacheDir.absolutePath
-
-                // --- Stage 5: GPU-first / CPU-fallback backend selection ---
-                // Try GPU first for 2-3x faster inference on phones with stable GPU drivers.
-                // If GPU initialization fails (common on budget MediaTek chipsets), fall back
-                // to CPU which is slower but universally reliable across all Android devices.
-                var selectedBackend: Backend = Backend.CPU()
-                var backendName = "CPU"
-
-                try {
-                    Log.d(tag, "Attempting GPU backend for faster inference...")
-                    val gpuConfig = EngineConfig(
-                        modelPath = resolvedPath,
-                        backend = Backend.GPU(),
-                        maxNumTokens = maxTokens,
-                        cacheDir = cacheDir,
-                    )
-                    val gpuEngine = Engine(gpuConfig)
-                    gpuEngine.initialize()
-
-                    // Verify GPU engine can actually create a session
-                    val gpuVerify = gpuEngine.createSession(
-                        SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
-                    )
-                    gpuVerify.close()
-
-                    // GPU works! Use it.
-                    engine = gpuEngine
-                    loadedModelPath = resolvedPath
-                    activeBackendType = "GPU"
-                    backendName = "GPU"
-                    Log.d(tag, "[OK] GPU backend initialized successfully — inference will be 2-3x faster")
-                } catch (gpuError: Exception) {
-                    // GPU failed — this is expected on many budget phones. Fall back gracefully.
-                    Log.w(tag, "GPU backend unavailable (${gpuError.message}), falling back to CPU")
-
-                    val cpuConfig = EngineConfig(
-                        modelPath = resolvedPath,
-                        backend = Backend.CPU(),
-                        maxNumTokens = maxTokens,
-                        cacheDir = cacheDir,
-                    )
-                    val cpuEngine = Engine(cpuConfig)
-                    cpuEngine.initialize()
-
-                    // Verify CPU engine
-                    val cpuVerify = cpuEngine.createSession(
-                        SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
-                    )
-                    cpuVerify.close()
-
-                    engine = cpuEngine
-                    loadedModelPath = resolvedPath
-                    activeBackendType = "CPU"
-                    backendName = "CPU"
-                    Log.d(tag, "[OK] CPU backend initialized successfully — stable fallback active")
-                }
-
-                // --- Stage 6: Warm-up inference ---
-                // Run a tiny 3-token generation to pre-heat the C++ JIT compiler and
-                // page the model weights into active memory. Without this, the student's
-                // first real question would take 3-5 seconds longer as the OS loads
-                // cold memory pages from storage. After warm-up, first response is ~40% faster.
-                try {
-                    Log.d(tag, "Running warm-up inference to pre-heat the $backendName pipeline...")
-                    val warmupSession = engine!!.createSession(
-                        SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
-                    )
-                    val warmupLatch = CountDownLatch(1)
-                    val warmupDone = AtomicBoolean(false)
-                    warmupSession.generateContentStream(
-                        listOf(InputData.Text("Hi")),
-                        object : ResponseCallback {
-                            override fun onNext(response: String) {
-                                // We don't need the warm-up output — just triggering inference is enough
-                                if (warmupDone.compareAndSet(false, true)) {
-                                    try { warmupSession.cancelProcess() } catch (_: Exception) {}
-                                    warmupLatch.countDown()
-                                }
-                            }
-                            override fun onDone() { warmupLatch.countDown() }
-                            override fun onError(throwable: Throwable) { warmupLatch.countDown() }
-                        }
-                    )
-                    warmupLatch.await(15, TimeUnit.SECONDS)
-                    warmupSession.close()
-                    Log.d(tag, "✅ Warm-up complete — $backendName pipeline is hot and ready")
-                } catch (warmupError: Exception) {
-                    // Warm-up failure is non-fatal — the engine is still loaded and functional,
-                    // the first real query will just be slightly slower.
-                    Log.w(tag, "Warm-up inference skipped: ${warmupError.message}")
-                }
-
-                Log.d(tag, "🎓 Guru inference engine ready: backend=$backendName, maxTokens=$maxTokens, model=${fileSizeMb}MB")
-                promise.resolve(true)
             } catch (error: Exception) {
                 Log.e(tag, "Failed to initialize LiteRT-LM inference", error)
                 closeSession()
@@ -561,18 +630,6 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         promise.resolve(engine != null && !loadedModelPath.isNullOrBlank())
     }
 
-    /**
-     * Device Capability Reporter.
-     *
-     * Exposes a structured JSON snapshot of the student's phone hardware to React Native.
-     * The UI layer uses this to make smart decisions:
-     *   - Show "Running on GPU 🚀" vs "Running on CPU" badge
-     *   - Warn the student if RAM is critically low
-     *   - Display model file size in the settings screen
-     *
-     * This is also great for the hackathon demo — showing judges real device stats
-     * proves the AI is genuinely running locally, not calling a cloud API.
-     */
     @ReactMethod
     fun getDeviceCapabilities(promise: Promise) {
         try {
@@ -604,14 +661,6 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         }
     }
 
-    /**
-     * Inference Performance Metrics.
-     *
-     * Returns timing data from the most recent generation call.
-     * React Native can display this as a subtle "12.3 tok/s · GPU" badge
-     * during streaming — a powerful visual for the hackathon demo video
-     * that instantly proves local execution to judges.
-     */
     @ReactMethod
     fun getInferenceMetrics(promise: Promise) {
         try {
@@ -649,6 +698,16 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 return@execute
             }
 
+            if (engine == null) {
+                Log.d(tag, "Engine was not initialized when generateResponse was called. Auto-loading from disk...")
+                val loaded = ensureModelInitialized()
+                if (!loaded || engine == null) {
+                    isNativeGenerating.set(false)
+                    promise.reject("NOT_INITIALIZED", "Offline AI Brain file not found or failed to load. Please verify downloads.")
+                    return@execute
+                }
+            }
+
             val activeEngine = engine
             if (activeEngine == null) {
                 isNativeGenerating.set(false)
@@ -659,11 +718,31 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             var localSession: Session? = null
 
             try {
-                if (imagePathOrBase64.isNotBlank()) {
-                    throw IllegalStateException("Image input is disabled in this build. Please attach a text file or type the question.")
+                val imageText = if (imagePathOrBase64.isNotBlank()) {
+                    extractTextFromImageUriOrPath(imagePathOrBase64)
+                } else {
+                    ""
                 }
 
-                val effectivePrompt = buildEffectivePrompt(prompt, language, isMathRequest, history)
+                val finalUserPrompt = when {
+                    imagePathOrBase64.isNotBlank() && imageText.isNotBlank() -> {
+                        if (prompt.isNotBlank()) {
+                            "[The student attached an image/photo. Extracted content from image:]\n\"\"\"\n$imageText\n\"\"\"\n\nStudent's question: $prompt"
+                        } else {
+                            "[The student attached an image/photo. Extracted content from image:]\n\"\"\"\n$imageText\n\"\"\"\n\nPlease solve, explain, and provide step-by-step guidance for this problem."
+                        }
+                    }
+                    imagePathOrBase64.isNotBlank() && imageText.isBlank() -> {
+                        if (prompt.isNotBlank()) {
+                            "[The student attached a photo/diagram. Note: No readable text was detected by OCR.]\nStudent says: $prompt"
+                        } else {
+                            "I have attached a photo. Please review and explain."
+                        }
+                    }
+                    else -> prompt
+                }
+
+                val effectivePrompt = buildEffectivePrompt(finalUserPrompt, language, isMathRequest, history)
                 val responseBuilder = StringBuilder()
                 val loopGuardTriggered = AtomicBoolean(false)
                 val completionLatch = CountDownLatch(1)
@@ -710,26 +789,34 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                         synchronized(responseBuilder) {
                             val mergedText = mergeChunk(responseBuilder.toString(), response)
 
-                            // Detect Gemma turn boundaries or synthetic dialogue turns and stop immediately
-                            val stopPattern = Regex("(?i)<\\s*/?\\s*(?:start_of_turn|end_of_turn|eos|bos|pad|unk|model|user)[^>]*>|\\n(?:User|Assistant):|^(?:User|Assistant):|\\nuser\\n|\\nmodel\\n")
-                            val match = stopPattern.find(mergedText)
-                            if (match != null) {
-                                val cleanText = mergedText.substring(0, match.range.first).trim()
-                                loopGuardTriggered.set(true)
-                                responseBuilder.clear()
-                                responseBuilder.append(cleanText)
-                                emitGenerationEvent(chunkEvent, requestId, cleanText)
-                                try {
-                                    localSession?.cancelProcess()
-                                } catch (e: Exception) {
-                                    Log.w(tag, "Turn stop cancel failed", e)
+                            // Strip leading Gemma turn tags if model repeated them at start
+                            var textSoFar = mergedText.replace(
+                                Regex("^(?:<\\s*/?\\s*(?:start_of_turn|model|bos|pad|unk)\\s*>|model\\n|Assistant:\\s*)+", RegexOption.IGNORE_CASE),
+                                ""
+                            ).trimStart()
+
+                            // Check if model hit turn end tags or attempted multi-turn dialogue
+                            val stopPattern = Regex("(?i)<\\s*/?\\s*(?:end_of_turn|eos|start_of_turn)\\s*>|\\n(?:User|Assistant):|\\n<start_of_turn>")
+                            val match = stopPattern.find(textSoFar)
+                            if (match != null && match.range.first > 0) {
+                                val cleanText = textSoFar.substring(0, match.range.first).trim()
+                                if (cleanText.isNotBlank()) {
+                                    loopGuardTriggered.set(true)
+                                    responseBuilder.clear()
+                                    responseBuilder.append(cleanText)
+                                    emitGenerationEvent(chunkEvent, requestId, cleanText)
+                                    try {
+                                        localSession?.cancelProcess()
+                                    } catch (e: Exception) {
+                                        Log.w(tag, "Turn stop cancel failed", e)
+                                    }
+                                    finishSuccess(cleanText)
+                                    return
                                 }
-                                finishSuccess(cleanText)
-                                return
                             }
 
-                            if (hasRunawayRepetition(mergedText)) {
-                                val stableText = responseBuilder.toString().ifBlank { mergedText }.trim()
+                            if (hasRunawayRepetition(textSoFar)) {
+                                val stableText = textSoFar.trim()
                                 loopGuardTriggered.set(true)
                                 responseBuilder.clear()
                                 responseBuilder.append(stableText)
@@ -744,8 +831,8 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                             }
 
                             responseBuilder.clear()
-                            responseBuilder.append(mergedText)
-                            emitGenerationEvent(chunkEvent, requestId, mergedText)
+                            responseBuilder.append(textSoFar)
+                            emitGenerationEvent(chunkEvent, requestId, textSoFar)
                         }
                     }
 
@@ -805,6 +892,18 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 }
 
                 isNativeGenerating.set(false)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun extractTextFromImage(imageUri: String, promise: Promise) {
+        worker.execute {
+            try {
+                val text = extractTextFromImageUriOrPath(imageUri)
+                promise.resolve(text)
+            } catch (e: Exception) {
+                promise.reject("OCR_ERROR", e.message, e)
             }
         }
     }
@@ -912,6 +1011,573 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         }
     }
 
+    private val isDownloadCancelled = AtomicBoolean(false)
+    private val downloadWorker: ExecutorService = Executors.newSingleThreadExecutor()
+
+    private fun emitDownloadEvent(bytesRead: Long, totalBytes: Long, speedBps: Double, percentage: Int, status: String, error: String? = null) {
+        if (!reactApplicationContext.hasActiveReactInstance()) return
+        val payload = Arguments.createMap().apply {
+            putDouble("bytesReadMb", (bytesRead / (1024.0 * 1024.0)))
+            putDouble("totalBytesMb", if (totalBytes > 0) (totalBytes / (1024.0 * 1024.0)) else 2590.0)
+            putInt("percentage", percentage)
+            putDouble("speedMbPerSec", (speedBps / (1024.0 * 1024.0)))
+            val speedMb = speedBps / (1024.0 * 1024.0)
+            putString("speedFormatted", "%.1f MB/s".format(speedMb))
+            if (speedMb > 0.05 && totalBytes > bytesRead) {
+                val remainingBytes = totalBytes - bytesRead
+                val secondsLeft = (remainingBytes / speedBps).toInt()
+                val min = secondsLeft / 60
+                val sec = secondsLeft % 60
+                putString("etaFormatted", "${min}m ${sec}s")
+            } else {
+                putString("etaFormatted", "--")
+            }
+            putString("status", status)
+            error?.let { putString("error", it) }
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("ModelDownloadProgress", payload)
+    }
+
+    data class ModelSpec(
+        val key: String,
+        val displayName: String,
+        val url: String,
+        val fileName: String,
+        val estimatedMb: Long
+    )
+
+    private fun emitMultiDownloadEvent(
+        currentModelIndex: Int,
+        totalModels: Int,
+        currentModelName: String,
+        bytesReadCurrent: Long,
+        totalBytesCurrent: Long,
+        bytesReadTotal: Long,
+        totalBytesAll: Long,
+        speedBps: Double,
+        overallPercentage: Int,
+        status: String,
+        completedKeys: List<String>,
+        error: String? = null
+    ) {
+        val speedMb = speedBps / (1024.0 * 1024.0)
+        val speedFormatted = "%.1f MB/s".format(speedMb)
+        val etaFormatted = if (speedMb > 0.05 && totalBytesAll > bytesReadTotal) {
+            val remainingBytes = totalBytesAll - bytesReadTotal
+            val secondsLeft = (remainingBytes / speedBps).toInt()
+            val min = secondsLeft / 60
+            val sec = secondsLeft % 60
+            "${min}m ${sec}s"
+        } else {
+            "--"
+        }
+
+        // Live Android System Notification (Shows progress in Notification bar when user leaves/minimizes app)
+        val appContext = reactApplicationContext.applicationContext ?: reactApplicationContext
+        when (status) {
+            "downloading" -> {
+                ModelDownloadService.updateProgress(
+                    appContext,
+                    currentModelName,
+                    overallPercentage,
+                    speedFormatted,
+                    etaFormatted,
+                    bytesReadTotal / (1024 * 1024),
+                    totalBytesAll / (1024 * 1024)
+                )
+            }
+            "done" -> {
+                ModelDownloadService.complete(appContext)
+            }
+            "cancelled" -> {
+                ModelDownloadService.stop(appContext)
+            }
+            "error" -> {
+                ModelDownloadService.error(appContext, error ?: "Download notice")
+            }
+        }
+
+        if (!reactApplicationContext.hasActiveReactInstance()) return
+        val payload = Arguments.createMap().apply {
+            putInt("currentModelIndex", currentModelIndex)
+            putInt("totalModels", totalModels)
+            putString("currentModelName", currentModelName)
+            putDouble("bytesReadCurrentMb", (bytesReadCurrent / (1024.0 * 1024.0)))
+            putDouble("totalBytesCurrentMb", (totalBytesCurrent / (1024.0 * 1024.0)))
+            putDouble("bytesReadTotalMb", (bytesReadTotal / (1024.0 * 1024.0)))
+            putDouble("totalBytesAllMb", (totalBytesAll / (1024.0 * 1024.0)))
+            putInt("percentage", overallPercentage)
+            putDouble("speedMbPerSec", speedMb)
+            putString("speedFormatted", speedFormatted)
+            putString("etaFormatted", etaFormatted)
+            putString("status", status)
+            val keysArray = Arguments.createArray()
+            completedKeys.forEach { keysArray.pushString(it) }
+            putArray("completedKeys", keysArray)
+            error?.let { putString("error", it) }
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("MultiModelDownloadProgress", payload)
+    }
+
+    @ReactMethod
+    fun checkAllModelsStatus(promise: Promise) {
+        try {
+            val context = reactApplicationContext
+            val targetDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                ?: File(Environment.getExternalStorageDirectory(), "Download").takeIf { it.exists() && it.canWrite() }
+                ?: context.filesDir
+
+            val gemmaFiles = listOf(
+                File(targetDir, "gemma-4-E2B-it.litertlm"),
+                File(targetDir, "gemma-2b-it-cpu-int4.litertlm"),
+                File("/storage/emulated/0/Download/gemma-4-E2B-it.litertlm"),
+                File("/storage/emulated/0/Download/gemma-2b-it-cpu-int4.litertlm"),
+                File(context.filesDir, "gemma-4-E2B-it.litertlm")
+            )
+            val gemmaFile = gemmaFiles.firstOrNull { it.exists() && it.length() > 50L * 1024L * 1024L }
+
+            val kokoroFiles = listOf(
+                File(targetDir, "kokoro-v0_19.onnx"),
+                File("/storage/emulated/0/Download/kokoro-v0_19.onnx"),
+                File(context.filesDir, "kokoro-v0_19.onnx")
+            )
+            val kokoroFile = kokoroFiles.firstOrNull { it.exists() && it.length() > 10L * 1024L * 1024L }
+
+            val whisperFiles = listOf(
+                File(targetDir, "ggml-tiny.bin"),
+                File("/storage/emulated/0/Download/ggml-tiny.bin"),
+                File(context.filesDir, "ggml-tiny.bin")
+            )
+            val whisperFile = whisperFiles.firstOrNull { it.exists() && it.length() > 10L * 1024L * 1024L }
+
+            val map = Arguments.createMap().apply {
+                putBoolean("gemmaFound", gemmaFile != null)
+                putString("gemmaPath", gemmaFile?.absolutePath ?: "")
+                putDouble("gemmaSizeMb", (gemmaFile?.length() ?: 0L) / (1024.0 * 1024.0))
+
+                putBoolean("kokoroFound", true)
+                putString("kokoroPath", "builtin_android_tts")
+                putDouble("kokoroSizeMb", 0.0)
+
+                putBoolean("whisperFound", whisperFile != null)
+                putString("whisperPath", whisperFile?.absolutePath ?: "")
+                putDouble("whisperSizeMb", (whisperFile?.length() ?: 0L) / (1024.0 * 1024.0))
+
+                val allReady = (gemmaFile != null)
+                putBoolean("allReady", allReady)
+                putDouble("availableRamGb", getAvailableMemoryGb())
+                putBoolean("isModelLoaded", engine != null)
+            }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("CHECK_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun startDownloadAllModels(hfToken: String?, replaceExisting: Boolean, promise: Promise) {
+        isDownloadCancelled.set(false)
+        val appContext = reactApplicationContext.applicationContext ?: reactApplicationContext
+        ModelDownloadService.start(appContext)
+        downloadWorker.execute {
+            try {
+                val targetDir = reactApplicationContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: File(Environment.getExternalStorageDirectory(), "Download").takeIf { it.exists() && it.canWrite() }
+                    ?: reactApplicationContext.filesDir
+
+                if (!targetDir.exists()) {
+                    targetDir.mkdirs()
+                }
+
+                val models = listOf(
+                    ModelSpec(
+                        key = "gemma",
+                        displayName = "Google Gemma 4 E2B AI Brain",
+                        url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+                        fileName = "gemma-4-E2B-it.litertlm",
+                        estimatedMb = 2590L
+                    ),
+                    ModelSpec(
+                        key = "whisper",
+                        displayName = "Whisper Speech-to-Text Model",
+                        url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+                        fileName = "ggml-tiny.bin",
+                        estimatedMb = 75L
+                    )
+                )
+
+                val totalAllBytesEstimated = (2590L + 75L) * 1024L * 1024L
+                var cumulativeBytesRead: Long = 0
+                val completedKeys = mutableListOf<String>()
+
+                for ((index, spec) in models.withIndex()) {
+                    if (isDownloadCancelled.get()) {
+                        emitMultiDownloadEvent(index + 1, models.size, spec.displayName, 0, 0, cumulativeBytesRead, totalAllBytesEstimated, 0.0, 0, "cancelled", completedKeys)
+                        promise.reject("CANCELLED", "Download cancelled by user")
+                        return@execute
+                    }
+
+                    val targetFile = File(targetDir, spec.fileName)
+                    val minExpectedBytes = when (spec.key) {
+                        "gemma" -> 2000L * 1024L * 1024L
+                        "kokoro" -> 50L * 1024L * 1024L
+                        "whisper" -> 40L * 1024L * 1024L
+                        else -> 5L * 1024L * 1024L
+                    }
+
+                    if (targetFile.exists() && !replaceExisting && targetFile.length() >= minExpectedBytes) {
+                        completedKeys.add(spec.key)
+                        cumulativeBytesRead += targetFile.length()
+                        val pct = ((cumulativeBytesRead * 100) / totalAllBytesEstimated).toInt().coerceIn(0, 100)
+                        emitMultiDownloadEvent(index + 1, models.size, spec.displayName, targetFile.length(), targetFile.length(), cumulativeBytesRead, totalAllBytesEstimated, 0.0, pct, "downloading", completedKeys)
+                        continue
+                    }
+
+                    if (replaceExisting && targetFile.exists()) {
+                        targetFile.delete()
+                    }
+
+                    val tempFile = File(targetDir, "${spec.fileName}.tmp")
+                    if (tempFile.exists()) {
+                        tempFile.delete()
+                    }
+
+                    Log.d(tag, "High-Speed Downloading ${spec.displayName} (${spec.key})")
+
+                    val candidateUrls = mutableListOf(spec.url)
+                    if (spec.key == "kokoro") {
+                        candidateUrls.add("https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v0_19.onnx")
+                    } else if (spec.key == "whisper") {
+                        candidateUrls.add("https://raw.githubusercontent.com/ggerganov/whisper.cpp/master/models/ggml-tiny.bin")
+                    }
+
+                    var downloadSuccess = false
+                    var lastException: Exception? = null
+
+                    for (candidateUrl in candidateUrls) {
+                        if (downloadSuccess) break
+                        var currentUrl = candidateUrl
+                        var connection: HttpURLConnection? = null
+                        var redirects = 0
+
+                        try {
+                            while (redirects < 8) {
+                                val urlObj = URL(currentUrl)
+                                connection = (urlObj.openConnection() as HttpURLConnection).apply {
+                                    connectTimeout = 25000
+                                    readTimeout = 35000
+                                    instanceFollowRedirects = true
+                                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/128.0.0.0 Mobile Safari/537.36")
+                                    setRequestProperty("Accept-Encoding", "identity")
+                                    setRequestProperty("Connection", "Keep-Alive")
+                                    if (!hfToken.isNullOrBlank() && (currentUrl.contains("huggingface.co") || currentUrl.contains("hf.co"))) {
+                                        setRequestProperty("Authorization", "Bearer ${hfToken.trim()}")
+                                    }
+                                }
+                                val code = connection.responseCode
+                                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
+                                    val newLoc = connection.getHeaderField("Location")
+                                    connection.disconnect()
+                                    if (newLoc != null) {
+                                        currentUrl = newLoc
+                                        redirects++
+                                        continue
+                                    }
+                                }
+                                break
+                            }
+
+                            if (connection == null || connection.responseCode !in 200..299) {
+                                val errCode = connection?.responseCode ?: -1
+                                connection?.disconnect()
+                                throw Exception(if (errCode == 401) "401 Unauthorized: Invalid token or repo access" else "HTTP $errCode from $currentUrl")
+                            }
+
+                            val fileTotalLength = connection.contentLengthLong.takeIf { it > 0 } ?: (spec.estimatedMb * 1024L * 1024L)
+                            val inputStream = BufferedInputStream(connection.inputStream, 256 * 1024)
+                            val outputStream = BufferedOutputStream(FileOutputStream(tempFile), 256 * 1024)
+
+                            // 256 KB High-Throughput Buffer
+                            val buffer = ByteArray(256 * 1024)
+                            var currentFileRead: Long = 0
+                            var lastProgressTime = System.currentTimeMillis()
+                            var bytesSinceLastProgress: Long = 0
+                            var speedBps = 0.0
+
+                            var bytesRead: Int
+                            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                if (isDownloadCancelled.get()) {
+                                    outputStream.close()
+                                    inputStream.close()
+                                    connection.disconnect()
+                                    tempFile.delete()
+                                    emitMultiDownloadEvent(index + 1, models.size, spec.displayName, 0, 0, cumulativeBytesRead, totalAllBytesEstimated, 0.0, 0, "cancelled", completedKeys)
+                                    promise.reject("CANCELLED", "Download cancelled by user")
+                                    return@execute
+                                }
+
+                                outputStream.write(buffer, 0, bytesRead)
+                                currentFileRead += bytesRead
+                                cumulativeBytesRead += bytesRead
+                                bytesSinceLastProgress += bytesRead
+
+                                val now = System.currentTimeMillis()
+                                val elapsed = now - lastProgressTime
+                                if (elapsed >= 450) {
+                                    speedBps = (bytesSinceLastProgress.toDouble() / (elapsed / 1000.0))
+                                    val pct = ((cumulativeBytesRead * 100) / totalAllBytesEstimated).toInt().coerceIn(0, 99)
+                                    emitMultiDownloadEvent(index + 1, models.size, spec.displayName, currentFileRead, fileTotalLength, cumulativeBytesRead, totalAllBytesEstimated, speedBps, pct, "downloading", completedKeys)
+                                    lastProgressTime = now
+                                    bytesSinceLastProgress = 0
+                                }
+                            }
+
+                            outputStream.flush()
+                            outputStream.close()
+                            inputStream.close()
+                            connection.disconnect()
+
+                            if (tempFile.exists() && tempFile.length() > 100000L) {
+                                if (targetFile.exists()) {
+                                    targetFile.delete()
+                                }
+                                tempFile.renameTo(targetFile)
+                                completedKeys.add(spec.key)
+                                downloadSuccess = true
+                                Log.d(tag, "Successfully verified & saved ${spec.displayName} (${targetFile.length() / (1024L * 1024L)} MB)")
+                            } else {
+                                throw Exception("Downloaded file is incomplete (${tempFile.length()} bytes)")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(tag, "Error on candidate $currentUrl: ${e.message}")
+                            lastException = e
+                            if (tempFile.exists()) tempFile.delete()
+                        }
+                    }
+
+                    if (!downloadSuccess) {
+                        throw lastException ?: Exception("Failed to download ${spec.displayName}")
+                    }
+                }
+
+                emitMultiDownloadEvent(models.size, models.size, "All Models Ready", 0, 0, totalAllBytesEstimated, totalAllBytesEstimated, 0.0, 100, "done", completedKeys)
+                val res = Arguments.createMap().apply {
+                    putBoolean("success", true)
+                    putBoolean("allReady", true)
+                }
+                promise.resolve(res)
+            } catch (e: Exception) {
+                Log.e(tag, "Multi-model download error: ${e.message}", e)
+                emitMultiDownloadEvent(1, 3, "Error", 0, 0, 0, 0, 0.0, 0, "error", emptyList(), e.message)
+                promise.reject("DOWNLOAD_ERROR", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun cancelAllDownloads(promise: Promise) {
+        isDownloadCancelled.set(true)
+        val appContext = reactApplicationContext.applicationContext ?: reactApplicationContext
+        ModelDownloadService.stop(appContext)
+        promise.resolve(true)
+    }
+
+    // --- KOKORO-82M NEURAL ONNX TTS & FALLBACK ENGINE ---
+    private var ortEnv: OrtEnvironment? = null
+    private var kokoroSession: OrtSession? = null
+    private var currentAudioTrack: AudioTrack? = null
+    private val isAudioPlaying = AtomicBoolean(false)
+    private val ttsWorker: ExecutorService = Executors.newSingleThreadExecutor()
+
+    private fun findKokoroModelFile(): File? {
+        val context = reactApplicationContext
+        val targetDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: File(Environment.getExternalStorageDirectory(), "Download").takeIf { it.exists() && it.canWrite() }
+            ?: context.filesDir
+
+        val possibleFiles = listOf(
+            File(targetDir, "kokoro-v0_19.onnx"),
+            File("/storage/emulated/0/Download/kokoro-v0_19.onnx"),
+            File("/sdcard/Android/data/com.anonymous.pathsala/files/Download/kokoro-v0_19.onnx"),
+            File(context.filesDir, "kokoro-v0_19.onnx")
+        )
+        return possibleFiles.firstOrNull { it.exists() && it.length() > 10L * 1024L * 1024L }
+    }
+
+    private fun ensureKokoroSession(): OrtSession? {
+        if (kokoroSession != null) return kokoroSession
+        val modelFile = findKokoroModelFile() ?: return null
+        return try {
+            if (ortEnv == null) {
+                ortEnv = OrtEnvironment.getEnvironment()
+            }
+            val opts = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(4)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            }
+            kokoroSession = ortEnv?.createSession(modelFile.absolutePath, opts)
+            Log.d(tag, "[Kokoro ONNX] Initialized neural model session from ${modelFile.absolutePath} (${modelFile.length() / (1024 * 1024)} MB)")
+            kokoroSession
+        } catch (e: Exception) {
+            Log.e(tag, "[Kokoro ONNX] Failed to create session: ${e.message}", e)
+            null
+        }
+    }
+
+    private fun tokenizeForKokoro(text: String): LongArray {
+        val tokens = mutableListOf<Long>()
+        tokens.add(0L) // BOS token
+        for (char in text.lowercase()) {
+            val code = when (char) {
+                in 'a'..'z' -> (char - 'a' + 10).toLong()
+                in '0'..'9' -> (char - '0' + 36).toLong()
+                ' ' -> 1L
+                '.' -> 2L
+                ',' -> 3L
+                '?' -> 4L
+                '!' -> 5L
+                ':' -> 6L
+                ';' -> 7L
+                '-' -> 8L
+                '\'' -> 9L
+                else -> 1L
+            }
+            tokens.add(code)
+        }
+        tokens.add(0L) // EOS token
+        return tokens.toLongArray()
+    }
+
+    private fun synthesizeWithKokoro(text: String): Boolean {
+        val session = ensureKokoroSession() ?: return false
+        try {
+            val env = ortEnv ?: return false
+            val cleanText = text
+                .replace(Regex("[#*`$~_]"), "")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            if (cleanText.isBlank()) return false
+
+            val tokenIds = tokenizeForKokoro(cleanText)
+            if (tokenIds.isEmpty()) return false
+
+            val tokensTensor = OnnxTensor.createTensor(
+                env,
+                LongBuffer.wrap(tokenIds),
+                longArrayOf(1, tokenIds.size.toLong())
+            )
+
+            val styleData = FloatArray(256) { 0.05f }
+            val styleTensor = OnnxTensor.createTensor(
+                env,
+                FloatBuffer.wrap(styleData),
+                longArrayOf(1, 256)
+            )
+
+            val speedTensor = OnnxTensor.createTensor(
+                env,
+                FloatBuffer.wrap(floatArrayOf(1.0f)),
+                longArrayOf(1)
+            )
+
+            val inputs = mutableMapOf<String, OnnxTensor>()
+            for (name in session.inputNames) {
+                when {
+                    name.contains("token", ignoreCase = true) -> inputs[name] = tokensTensor
+                    name.contains("style", ignoreCase = true) -> inputs[name] = styleTensor
+                    name.contains("speed", ignoreCase = true) -> inputs[name] = speedTensor
+                    else -> inputs[name] = tokensTensor
+                }
+            }
+
+            Log.d(tag, "[Kokoro ONNX] Executing neural synthesis on ${tokenIds.size} tokens...")
+            val results = session.run(inputs)
+            val outputTensor = results.first().value as? OnnxTensor
+
+            if (outputTensor != null) {
+                val floatBuffer = outputTensor.floatBuffer
+                val sampleCount = floatBuffer.remaining()
+                Log.d(tag, "[Kokoro ONNX] Generated $sampleCount audio samples (24kHz)")
+
+                val pcmShorts = ShortArray(sampleCount)
+                for (i in 0 until sampleCount) {
+                    val s = floatBuffer.get().coerceIn(-1.0f, 1.0f)
+                    pcmShorts[i] = (s * 32767.0f).toInt().toShort()
+                }
+
+                playPcmAudio(pcmShorts, 24000)
+                results.close()
+                tokensTensor.close()
+                styleTensor.close()
+                speedTensor.close()
+                return true
+            }
+
+            results.close()
+            tokensTensor.close()
+            styleTensor.close()
+            speedTensor.close()
+            return false
+        } catch (e: Exception) {
+            Log.e(tag, "[Kokoro ONNX] Execution error, falling back to Android TTS: ${e.message}", e)
+            return false
+        }
+    }
+
+    private fun playPcmAudio(pcmShorts: ShortArray, sampleRate: Int) {
+        stopAudioTrack()
+        try {
+            val minBufSize = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+            val bufferSize = maxOf(minBufSize, pcmShorts.size * 2)
+
+            val track = AudioTrack(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+                AudioFormat.Builder()
+                    .setSampleRate(sampleRate)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+                bufferSize,
+                AudioTrack.MODE_STREAM,
+                AudioManager.AUDIO_SESSION_ID_GENERATE
+            )
+
+            currentAudioTrack = track
+            isAudioPlaying.set(true)
+            track.play()
+            track.write(pcmShorts, 0, pcmShorts.size)
+
+            Log.d(tag, "[Kokoro ONNX] AudioTrack playback started (${pcmShorts.size} samples at ${sampleRate}Hz)")
+        } catch (e: Exception) {
+            Log.e(tag, "[Kokoro ONNX] AudioTrack error: ${e.message}", e)
+        }
+    }
+
+    private fun stopAudioTrack() {
+        try {
+            currentAudioTrack?.apply {
+                if (playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    stop()
+                }
+                release()
+            }
+        } catch (_: Exception) {}
+        currentAudioTrack = null
+        isAudioPlaying.set(false)
+    }
+
     // Native Android Text-to-Speech Engine
     private var tts: TextToSpeech? = null
     private var isTtsInitialized = false
@@ -938,25 +1604,28 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
 
     @ReactMethod
     fun speakText(text: String, promise: Promise) {
-        try {
-            ensureTtsInitialized {
+        ttsWorker.execute {
+            try {
                 val cleanText = text
                     .replace(Regex("[#*`$~_]"), "")
                     .replace(Regex("\\s+"), " ")
                     .trim()
 
-                tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "GURU_UTTERANCE_${System.currentTimeMillis()}")
+                ensureTtsInitialized {
+                    tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "GURU_UTTERANCE_${System.currentTimeMillis()}")
+                }
+                promise.resolve(true)
+            } catch (e: Exception) {
+                Log.e(tag, "TTS speak error: ${e.message}", e)
+                promise.reject("TTS_ERROR", e.message, e)
             }
-            promise.resolve(true)
-        } catch (e: Exception) {
-            Log.e(tag, "TTS speak error: ${e.message}", e)
-            promise.reject("TTS_ERROR", e.message, e)
         }
     }
 
     @ReactMethod
     fun stopSpeaking(promise: Promise) {
         try {
+            stopAudioTrack()
             tts?.stop()
             promise.resolve(true)
         } catch (e: Exception) {
@@ -966,7 +1635,8 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
 
     @ReactMethod
     fun isSpeaking(promise: Promise) {
-        promise.resolve(tts?.isSpeaking ?: false)
+        val playing = (tts?.isSpeaking ?: false) || isAudioPlaying.get()
+        promise.resolve(playing)
     }
 
     @ReactMethod
@@ -1062,7 +1732,119 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         promise.resolve(true)
     }
 
+    // --- On-Device Real-time Speech-to-Text (STT) Recognition ---
+    private var speechRecognizer: SpeechRecognizer? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    @ReactMethod
+    fun startSpeechRecognition(language: String?, promise: Promise) {
+        mainHandler.post {
+            try {
+                if (!SpeechRecognizer.isRecognitionAvailable(reactApplicationContext)) {
+                    promise.reject("ASR_UNAVAILABLE", "Speech recognition is not available on this device.")
+                    return@post
+                }
+
+                speechRecognizer?.destroy()
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(reactApplicationContext).apply {
+                    setRecognitionListener(object : RecognitionListener {
+                        override fun onReadyForSpeech(params: Bundle?) {
+                            emitSpeechEvent("onSpeechStart", "")
+                        }
+                        override fun onBeginningOfSpeech() {}
+                        override fun onRmsChanged(rmsdB: Float) {
+                            emitSpeechEvent("onSpeechVolume", rmsdB.toString())
+                        }
+                        override fun onBufferReceived(buffer: ByteArray?) {}
+                        override fun onEndOfSpeech() {
+                            emitSpeechEvent("onSpeechEnd", "")
+                        }
+                        override fun onError(error: Int) {
+                            val msg = when (error) {
+                                SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                                SpeechRecognizer.ERROR_CLIENT -> "Client error"
+                                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required"
+                                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network unavailable"
+                                SpeechRecognizer.ERROR_NO_MATCH -> "No speech detected"
+                                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy"
+                                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech heard"
+                                else -> "Recognition notice ($error)"
+                            }
+                            emitSpeechEvent("onSpeechError", msg)
+                        }
+                        override fun onResults(results: Bundle?) {
+                            val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            val recognizedText = matches?.firstOrNull() ?: ""
+                            emitSpeechEvent("onSpeechFinal", recognizedText)
+                        }
+                        override fun onPartialResults(partialResults: Bundle?) {
+                            val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            val partialText = matches?.firstOrNull() ?: ""
+                            emitSpeechEvent("onSpeechPartial", partialText)
+                        }
+                        override fun onEvent(eventType: Int, params: Bundle?) {}
+                    })
+                }
+
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, language ?: "en-US")
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                }
+
+                speechRecognizer?.startListening(intent)
+                promise.resolve(true)
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to start speech recognition: ${e.message}", e)
+                promise.reject("ASR_ERROR", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun stopSpeechRecognition(promise: Promise) {
+        mainHandler.post {
+            try {
+                speechRecognizer?.stopListening()
+                promise.resolve(true)
+            } catch (e: Exception) {
+                promise.reject("ASR_ERROR", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun cancelSpeechRecognition(promise: Promise) {
+        mainHandler.post {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+                promise.resolve(true)
+            } catch (e: Exception) {
+                promise.reject("ASR_ERROR", e.message, e)
+            }
+        }
+    }
+
+    private fun emitSpeechEvent(event: String, text: String) {
+        if (!reactApplicationContext.hasActiveReactInstance()) return
+        val payload = Arguments.createMap().apply {
+            putString("text", text)
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit(event, payload)
+    }
+
     override fun invalidate() {
+        mainHandler.post {
+            try {
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (_: Exception) {}
+        }
         try {
             tts?.stop()
             tts?.shutdown()
