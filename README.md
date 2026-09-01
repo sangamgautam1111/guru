@@ -26,6 +26,13 @@ Download the latest release APK directly for Android:
 
 - **[Download Latest Release APK](https://github.com/sangamgautam500/Guru/releases/latest)**
 
+## Setup
+
+1. **Install the APK**: Download and install `app-release.apk` on your Android device (Android 8.0+).
+2. **Download AI Models**: Open the app and tap "Download Models" to download the Gemma and Whisper models once.
+3. **Grant Permissions**: Allow camera and microphone access so you can take photos of textbook questions and speak into the mic.
+4. **Start Learning**: Turn on Airplane mode if you'd like, and start asking questions, reading textbooks, or practicing past papers.
+
 ## Hardware Performance Benchmark
 
 Tested live on physical Android devices using ADB system telemetry (`dumpsys meminfo`, `dumpsys gfxinfo`, and `top`):
@@ -42,3 +49,30 @@ Tested live on physical Android devices using ADB system telemetry (`dumpsys mem
 | UI Streaming FPS | 20 – 24 FPS | 60.0 FPS (16.6ms target) |
 | Memory Pressure (OOM) | 0 Crashes (Stable headroom) | 0 Crashes (Maximum headroom) |
 | Network Dependency | Offline | Offline |
+
+## Development
+
+To build and run Guru locally from source:
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/sangamgautam1111/guru.git
+   cd guru
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Run on Android**:
+   ```bash
+   npx react-native run-android
+   ```
+
+4. **Build Release APK**:
+   ```bash
+   cd android
+   ./gradlew assembleRelease
+   ```
+
