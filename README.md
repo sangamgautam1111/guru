@@ -41,4 +41,4 @@ Tested live on physical Android devices using ADB system telemetry (`dumpsys mem
 | CPU Usage (Inference) | ~68.5% (Stable budget execution) | ~16.6% (Ultra-efficient execution) |
 | UI Streaming FPS | 20 – 24 FPS | 60.0 FPS (16.6ms target) |
 | Memory Pressure (OOM) | 0 Crashes (Stable headroom) | 0 Crashes (Maximum headroom) |
-| Internet Required | Zero (100% Offline) | Zero (100% Offline) |
+| Network Dependency | Offline | Offline |
