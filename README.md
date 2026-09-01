@@ -76,3 +76,7 @@ To build and run Guru locally from source:
    ./gradlew assembleRelease
    ```
 
+---
+
+Made with ❤️ for Nepal students!
+
