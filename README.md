@@ -24,7 +24,7 @@ An offline AI tutor designed to help students learn concepts with an AI model de
 
 Download the latest release APK directly for Android:
 
-- **[Download Latest Release APK](https://github.com/sangamgautam500/Guru/releases/latest)**
+- **[Download Latest Release APK](https://github.com/sangamgautam1111/guru/releases/latest)**
 
 ## Setup
 
