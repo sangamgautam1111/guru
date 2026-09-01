@@ -14,3 +14,4 @@ veda/
 litertm_file/
 .tmp/
 *.litertlm
+*.keystore

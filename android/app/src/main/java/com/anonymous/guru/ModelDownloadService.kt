@@ -1,4 +1,4 @@
-package com.anonymous.pathsala
+package com.anonymous.guru
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -21,11 +22,11 @@ class ModelDownloadService : Service() {
         const val CHANNEL_NAME = "Guru Offline AI Downloads"
         const val NOTIFICATION_ID = 4040
 
-        const val ACTION_START = "com.anonymous.pathsala.ACTION_START_DOWNLOAD"
-        const val ACTION_STOP = "com.anonymous.pathsala.ACTION_STOP_DOWNLOAD"
-        const val ACTION_UPDATE_PROGRESS = "com.anonymous.pathsala.ACTION_UPDATE_PROGRESS"
-        const val ACTION_COMPLETE = "com.anonymous.pathsala.ACTION_COMPLETE_DOWNLOAD"
-        const val ACTION_ERROR = "com.anonymous.pathsala.ACTION_ERROR_DOWNLOAD"
+        const val ACTION_START = "com.anonymous.guru.ACTION_START_DOWNLOAD"
+        const val ACTION_STOP = "com.anonymous.guru.ACTION_STOP_DOWNLOAD"
+        const val ACTION_UPDATE_PROGRESS = "com.anonymous.guru.ACTION_UPDATE_PROGRESS"
+        const val ACTION_COMPLETE = "com.anonymous.guru.ACTION_COMPLETE_DOWNLOAD"
+        const val ACTION_ERROR = "com.anonymous.guru.ACTION_ERROR_DOWNLOAD"
 
         const val EXTRA_MODEL_NAME = "extra_model_name"
         const val EXTRA_PERCENTAGE = "extra_percentage"
@@ -116,6 +117,7 @@ class ModelDownloadService : Service() {
 
     private var notificationManager: NotificationManager? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -125,11 +127,23 @@ class ModelDownloadService : Service() {
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
             wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Guru:ModelDownloadWakeLock")?.apply {
-                acquire(30 * 60 * 1000L)
+                setReferenceCounted(false)
+                acquire(12 * 60 * 60 * 1000L) // 12 hours lock
             }
         } catch (e: Exception) {
             Log.w(TAG, "Could not acquire WakeLock: ${e.message}")
         }
+
+        try {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Guru:ModelDownloadWifiLock")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not acquire WifiLock: ${e.message}")
+        }
+
         isServiceRunning = true
     }
 
@@ -268,6 +282,13 @@ class ModelDownloadService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error releasing WakeLock: ${e.message}")
+        }
+        try {
+            if (wifiLock?.isHeld == true) {
+                wifiLock?.release()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing WifiLock: ${e.message}")
         }
     }
 

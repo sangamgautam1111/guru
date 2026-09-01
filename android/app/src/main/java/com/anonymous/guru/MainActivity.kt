@@ -1,4 +1,4 @@
-package com.anonymous.pathsala
+package com.anonymous.guru
 
 import android.os.Build
 import android.os.Bundle

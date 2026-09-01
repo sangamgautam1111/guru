@@ -1,4 +1,4 @@
-package com.anonymous.pathsala
+package com.anonymous.guru
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule

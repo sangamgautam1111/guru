@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Guru",
-    "slug": "pathsala",
-    "scheme": "pathsala",
+    "slug": "guru",
+    "scheme": "guru",
     "icon": "./assets/logo.png",
     "newArchEnabled": false,
     "splash": {
@@ -22,7 +22,7 @@
       ]
     ],
     "android": {
-      "package": "com.anonymous.pathsala",
+      "package": "com.anonymous.guru",
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#ffffff"

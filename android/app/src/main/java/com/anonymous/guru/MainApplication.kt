@@ -1,4 +1,4 @@
-package com.anonymous.pathsala
+package com.anonymous.guru
 
 import android.app.Application
 import android.content.res.Configuration

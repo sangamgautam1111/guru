@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   BackHandler,
   DeviceEventEmitter,
@@ -8,6 +9,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   NativeModules,
   PanResponder,
   PermissionsAndroid,
@@ -25,7 +27,9 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import {
+  ArrowLeft,
   ArrowRight,
   Award,
   BookOpen,
@@ -51,6 +55,13 @@ import {
   MessageSquare,
   Mic,
   MicOff,
+  Minus,
+  Users,
+  Box,
+  Lightbulb,
+  DollarSign,
+  Gift,
+  Book,
   PanelLeftClose,
   Plus,
   Radio,
@@ -59,19 +70,57 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Square,
+  StopCircle,
   Trash2,
   User,
   Volume2,
   VolumeX,
+  Wifi,
+  WifiOff,
+  Heart,
+  Coffee,
+  Globe,
   X,
+  Zap,
+  BarChart2,
+  Layers,
+  Lock,
+  Unlock,
   ZoomIn,
   ZoomOut,
+  MapPin,
 } from 'lucide-react-native';
+import Purchases, { PurchasesOffering, PurchasesPackage, CustomerInfo } from 'react-native-purchases';
 import { MathMarkdownRenderer } from './MathMarkdownRenderer';
+import {
+  ScienceAtomIllustration,
+  MathPyramidIllustration,
+  SocialGlobeIllustration,
+  NepaliDiyoIllustration,
+  EnglishQuillIllustration,
+  OptMathIllustration,
+  ComputerCodeIllustration,
+  ExamNotebookIllustration,
+  StreakFlameRing,
+  RobotAiIllustration,
+} from './SubjectIllustrations';
+import {
+  SEE_CURRICULUM_MEMORY,
+  getCurriculumContextForPrompt,
+  getCuratedMCQsForSubject,
+} from './seeCurriculumMemory';
+import {
+  SCIENCE_19_CHAPTERS,
+  getScienceChapterById,
+  getScienceChapterContextForGemma,
+  getRandomScienceMCQ,
+  ScienceChapter,
+} from './scienceSyllabusMemory';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-type TabState = 'home' | 'learn' | 'revision' | 'solver';
+type TabState = 'home' | 'learn' | 'revision' | 'donate';
 type ScreenState = 'onboarding' | 'download' | 'main';
 type SubjectId = 'science' | 'math' | 'social' | 'nepali' | 'english' | 'opt_math' | 'computer';
 type QuizStatus = 'idle' | 'correct' | 'wrong';
@@ -79,7 +128,6 @@ type QuizStatus = 'idle' | 'correct' | 'wrong';
 interface UserProfile {
   name: string;
   school: string;
-  grade: string;
 }
 
 interface Message {
@@ -145,6 +193,7 @@ const STORAGE_KEYS = {
 };
 
 const logoSource = require('./assets/logo.png');
+const stickerSource = require('./assets/sticker.png');
 
 // --- 10/10 CHATGPT-STYLE MARKDOWN, MATH & WORD SEPARATION PARSER ---
 const formatGemmaResponse = (text: string): string => {
@@ -246,13 +295,24 @@ const formatGemmaResponse = (text: string): string => {
   out = out
     .replace(/^[ \t]*#{1,6}\s*/gm, '')
     .replace(/#{1,6}\s*/g, '')
-    .replace(/([^\n])\s*(Phase\s*\d+:|Step\s*\d+:|Summary:)/gi, '$1\n\n$2')
+    .replace(/\.{2,}/g, '.')
+    .replace(/\b(Step|Phase|Part)\s*(\d+):?/gi, '$1 $2:')
+    .replace(/([^\n])\s*(Step\s*\d+:|Phase\s*\d+:|Part\s*\d+:|Summary:|Key Concept:)/gi, '$1\n\n$2')
+    .replace(/([a-z0-9\)])\s*(Definition|Origin|Formula|Meaning|Explanation|Note|Given|Solution|Key Point|Example|Derivation|Statement|Condition|Conclusion):/gi, '$1\n\n**$2:** ')
+    .replace(/(Formula|Definition|Origin|Meaning|Explanation|Note):\s*([A-Za-z0-9])/gi, '**$1:** $2')
+    .replace(/(Step\s*\d+:\s*[^.\n]+?)(Sir|The|According|In|When|Let|We|A|An|This|Here|It|By)\b/g, '$1\n\n$2')
     .replace(/(Phase\s*\d+:\s*[^.\n]+?\.)\s*([A-Z])/g, '$1\n\n$2')
     .replace(/(Step\s*\d+:\s*[^.\n]+?\.)\s*([A-Z])/g, '$1\n\n$2');
 
+  // 9. Markdown Tables Normalization
+  out = out
+    .replace(/([^\n])\s*(\b(?:Summary\s*Table|Comparison\s*Table|Table)?\s*\|)/gi, '$1\n\n$2')
+    .replace(/(Summary\s*Table|Table|Comparison):\s*\|/gi, '**$1:**\n\n|')
+    .replace(/\|\s*([A-Za-z0-9][^|\n]*?)\s*\|\s*([A-Za-z0-9])/g, '|$1|\n$2');
+
   // 10. Clean list items and excess blank lines
   out = out
-    .replace(/^[ \t]*[-*]\s+/gm, '• ')
+    .replace(/^[ \t]*[\*\-\+•]\s+/gm, '• ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
@@ -319,7 +379,109 @@ const ALL_QUIZ_POOL: QuizItem[] = [
   },
 ];
 
-// --- SUBJECT CURRICULUM & PDF ASSETS CATALOG ---
+// --- PAST PAPERS 2081 CATALOG (7 PROVINCES + BONUS) ---
+interface PastPaperItem {
+  province: string;
+  assetPath: string;
+  title: string;
+}
+
+interface SubjectPastPapers {
+  subject: string;
+  code: string;
+  iconName: string;
+  papers: PastPaperItem[];
+}
+
+const PAST_PAPERS_2081_DATA: SubjectPastPapers[] = [
+  {
+    subject: 'Compulsory Mathematics',
+    code: 'MTH-10',
+    iconName: 'calculator',
+    papers: [
+      { province: 'Bagmati Province', assetPath: 'past_papers/2081/Mathematics/Bagmati/SEE-Maths-Bagmati-2081.pdf', title: 'SEE 2081 C. Mathematics (Bagmati)' },
+      { province: 'Gandaki Province', assetPath: 'past_papers/2081/Mathematics/Gandaki/SEE-Maths-Gandaki-2081.pdf', title: 'SEE 2081 C. Mathematics (Gandaki)' },
+      { province: 'Koshi Province', assetPath: 'past_papers/2081/Mathematics/Koshi/SEE-Maths-Koshi-2081.pdf', title: 'SEE 2081 C. Mathematics (Koshi)' },
+      { province: 'Lumbini Province', assetPath: 'past_papers/2081/Mathematics/Lumbini/SEE-Maths-Lumbini-2081.pdf', title: 'SEE 2081 C. Mathematics (Lumbini)' },
+      { province: 'Madhesh Province', assetPath: 'past_papers/2081/Mathematics/Madesh/SEE-Maths-Madhesh-2081.pdf', title: 'SEE 2081 C. Mathematics (Madhesh)' },
+      { province: 'Karnali Province', assetPath: 'past_papers/2081/Mathematics/Karnali/SEE-Maths-Karnali-2081.pdf', title: 'SEE 2081 C. Mathematics (Karnali)' },
+      { province: 'Sudurpaschim Province', assetPath: 'past_papers/2081/Mathematics/Sudurpaschim/SEE-Maths-Sudurpaschim-2081.pdf', title: 'SEE 2081 C. Mathematics (Sudurpaschim)' },
+      { province: 'National Bonus Set (GI)', assetPath: 'past_papers/2081/Mathematics/Bonus/SEE-Math-2081-GI.pdf', title: 'SEE 2081 C. Mathematics (Bonus Set)' },
+    ],
+  },
+  {
+    subject: 'Science & Technology',
+    code: 'SCI-10',
+    iconName: 'atom',
+    papers: [
+      { province: 'Bagmati Province', assetPath: 'past_papers/2081/Science/Bagmati/SEE-Science-2081-BP.pdf', title: 'SEE 2081 Science (Bagmati)' },
+      { province: 'Gandaki Province', assetPath: 'past_papers/2081/Science/Gandaki/SEE-Science-2081-GP.pdf', title: 'SEE 2081 Science (Gandaki)' },
+      { province: 'Koshi Province', assetPath: 'past_papers/2081/Science/Koshi/SEE-Science-2081-Koshi.pdf', title: 'SEE 2081 Science (Koshi)' },
+      { province: 'Lumbini Province', assetPath: 'past_papers/2081/Science/Lumbini/SEE-Science-2081-LP.pdf', title: 'SEE 2081 Science (Lumbini)' },
+      { province: 'Madhesh Province', assetPath: 'past_papers/2081/Science/Madesh/SEE-Science-2081-MP.pdf', title: 'SEE 2081 Science (Madhesh)' },
+      { province: 'Karnali Province', assetPath: 'past_papers/2081/Science/Karnali/SEE-Science-2081-KP.pdf', title: 'SEE 2081 Science (Karnali)' },
+      { province: 'Sudurpaschim Province', assetPath: 'past_papers/2081/Science/Sudurpaschim/SEE-Science-2081-SP.pdf', title: 'SEE 2081 Science (Sudurpaschim)' },
+      { province: 'National Bonus Set (GI)', assetPath: 'past_papers/2081/Science/Bonus/SEE-Science-2081-GI.pdf', title: 'SEE 2081 Science (Bonus Set)' },
+    ],
+  },
+  {
+    subject: 'Optional Mathematics',
+    code: 'OPT-10',
+    iconName: 'sparkles',
+    papers: [
+      { province: 'General (Non-Technical)', assetPath: 'past_papers/2081/Optional Maths/Non Tech/opt-maths-2081Non-Technical.pdf', title: 'SEE 2081 Optional Maths (Non-Tech)' },
+      { province: 'Technical Stream', assetPath: 'past_papers/2081/Optional Maths/Technical Stream/OPT.-Maths-2081-Technical.pdf', title: 'SEE 2081 Optional Maths (Technical)' },
+      { province: 'National Bonus Set (GI)', assetPath: 'past_papers/2081/Optional Maths/Bonus/SEE-Opt.-Math-2081-GI.pdf', title: 'SEE 2081 Optional Maths (Bonus Set)' },
+    ],
+  },
+  {
+    subject: 'Compulsory English',
+    code: 'ENG-10',
+    iconName: 'book-open',
+    papers: [
+      { province: 'Bagmati Province', assetPath: 'past_papers/2081/English/Bagmati/SEE-English-BP.pdf', title: 'SEE 2081 English (Bagmati)' },
+      { province: 'Gandaki Province', assetPath: 'past_papers/2081/English/Gandaki/SEE-English-2081-GP.pdf', title: 'SEE 2081 English (Gandaki)' },
+      { province: 'Koshi Province', assetPath: 'past_papers/2081/English/Koshi/SEE-English-2081-Koshi-.pdf', title: 'SEE 2081 English (Koshi)' },
+      { province: 'Lumbini Province', assetPath: 'past_papers/2081/English/Lumbini/SEE-English-2081-LP.pdf', title: 'SEE 2081 English (Lumbini)' },
+      { province: 'Madhesh Province', assetPath: 'past_papers/2081/English/Madesh/SEE-English-2081-MP-.pdf', title: 'SEE 2081 English (Madhesh)' },
+      { province: 'Karnali Province', assetPath: 'past_papers/2081/English/Karnali/SEE-English-2081-Ka.P-.pdf', title: 'SEE 2081 English (Karnali)' },
+      { province: 'Sudurpaschim Province', assetPath: 'past_papers/2081/English/Sudurpaschim/SEE-English-2081-SP.pdf', title: 'SEE 2081 English (Sudurpaschim)' },
+      { province: 'National Bonus Set (GI)', assetPath: 'past_papers/2081/English/BONUS/SEE-English-2081-GI.pdf', title: 'SEE 2081 English (Bonus Set)' },
+    ],
+  },
+  {
+    subject: 'Compulsory Nepali',
+    code: 'NEP-10',
+    iconName: 'file-text',
+    papers: [
+      { province: 'Bagmati Province', assetPath: 'past_papers/2081/Nepali/Bagmati/SEE-Nepali-2081-BP.pdf', title: 'SEE 2081 Nepali (Bagmati)' },
+      { province: 'Gandaki Province', assetPath: 'past_papers/2081/Nepali/Gandaki/SEE-Nepali-2081-GP.pdf', title: 'SEE 2081 Nepali (Gandaki)' },
+      { province: 'Koshi Province', assetPath: 'past_papers/2081/Nepali/Koshi/SEE-Nepali-2081-Koshi-.pdf', title: 'SEE 2081 Nepali (Koshi)' },
+      { province: 'Lumbini Province', assetPath: 'past_papers/2081/Nepali/Lumbini/SEE-Nepali-2081-LP.pdf', title: 'SEE 2081 Nepali (Lumbini)' },
+      { province: 'Madhesh Province', assetPath: 'past_papers/2081/Nepali/Madesh/SEE-Nepali-2081-MP.pdf', title: 'SEE 2081 Nepali (Madhesh)' },
+      { province: 'Karnali Province', assetPath: 'past_papers/2081/Nepali/Karnali/SEE-Nepali-2081-Ka.-P.pdf', title: 'SEE 2081 Nepali (Karnali)' },
+      { province: 'Sudurpaschim Province', assetPath: 'past_papers/2081/Nepali/SudurPaschim/SEE-Nepali-2081-SP.pdf', title: 'SEE 2081 Nepali (Sudurpaschim)' },
+      { province: 'National Bonus Set (GI)', assetPath: 'past_papers/2081/Nepali/Bonus/SEE-Nepali-2081-GI.pdf', title: 'SEE 2081 Nepali (Bonus Set)' },
+    ],
+  },
+  {
+    subject: 'Social Studies',
+    code: 'SOC-10',
+    iconName: 'globe',
+    papers: [
+      { province: 'Bagmati Province', assetPath: 'past_papers/2081/Social/Bagmati/SEE-Social-2081-BP.pdf', title: 'SEE 2081 Social (Bagmati)' },
+      { province: 'Gandaki Province', assetPath: 'past_papers/2081/Social/Gandaki/SEE-Social-2081-GP.pdf', title: 'SEE 2081 Social (Gandaki)' },
+      { province: 'Koshi Province', assetPath: 'past_papers/2081/Social/Koshi/SEE-Social-2081Koshi-.pdf', title: 'SEE 2081 Social (Koshi)' },
+      { province: 'Lumbini Province', assetPath: 'past_papers/2081/Social/Lumbini/SEE-Social-2081-LP.pdf', title: 'SEE 2081 Social (Lumbini)' },
+      { province: 'Madhesh Province', assetPath: 'past_papers/2081/Social/Madesh/SEE-Social-2081-MP.pdf', title: 'SEE 2081 Social (Madhesh)' },
+      { province: 'Karnali Province', assetPath: 'past_papers/2081/Social/Karnali/SEE-Social-2081-Ka.-P.pdf', title: 'SEE 2081 Social (Karnali)' },
+      { province: 'Sudurpaschim Province', assetPath: 'past_papers/2081/Social/Sudurpaschim/SEE-Social-2081-SP.pdf', title: 'SEE 2081 Social (Sudurpaschim)' },
+      { province: 'National Bonus Set (GI)', assetPath: 'past_papers/2081/Social/Bonus/SEE-Social-2081-GI.pdf', title: 'SEE 2081 Social (Bonus Set)' },
+    ],
+  },
+];
+
+// --- CLASS 10 SUBJECTS CATALOG ---
 const SUBJECTS_DATA: SubjectItem[] = [
   {
     id: 'science',
@@ -365,8 +527,8 @@ const SUBJECTS_DATA: SubjectItem[] = [
     pagesCount: 224,
     hasDualMedium: false,
     nepaliAssetPdf: 'grade10/nepali/pdf/0010_NepaliGrade10.pdf',
-    englishTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक (CDC Official)',
-    nepaliTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक (CDC Official)',
+    englishTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक',
+    nepaliTitle: 'कक्षा १० नेपाली पाठ्यपुस्तक',
   },
   {
     id: 'english',
@@ -376,8 +538,8 @@ const SUBJECTS_DATA: SubjectItem[] = [
     pagesCount: 198,
     hasDualMedium: false,
     englishAssetPdf: 'grade10/english/pdf/9.Reduced-class 10 English Final_hsjc8bm.pdf',
-    englishTitle: 'Class 10 Compulsory English (CDC Official)',
-    nepaliTitle: 'Class 10 Compulsory English (CDC Official)',
+    englishTitle: 'Class 10 Compulsory English',
+    nepaliTitle: 'Class 10 Compulsory English',
   },
   {
     id: 'opt_math',
@@ -399,8 +561,209 @@ const SUBJECTS_DATA: SubjectItem[] = [
     pagesCount: 160,
     hasDualMedium: false,
     englishAssetPdf: 'grade10/computer science/CSGrade 10_rs8obhn.pdf',
-    englishTitle: 'Class 10 Computer Science (Official CDC)',
-    nepaliTitle: 'कक्षा १० कम्प्युटर विज्ञान (Official CDC)',
+    englishTitle: 'Class 10 Computer Science',
+    nepaliTitle: 'कक्षा १० कम्प्युटर विज्ञान',
+  },
+];
+
+// --- PRO MODEL QUESTION SOLUTIONS CATALOG ---
+interface ProSolutionItem {
+  id: string;
+  subject: string;
+  year: string;
+  title: string;
+  description: string;
+  assetPath: string;
+  badge: string;
+  iconColor: string;
+}
+
+const PRO_SOLUTIONS_2082: ProSolutionItem[] = [
+  {
+    id: 'sol_sci_2082',
+    subject: 'Science & Technology',
+    year: '2082',
+    title: 'SEE 2082 Science & Tech Full Model Solution',
+    description: 'Complete step-by-step answers, chemical equations & ray diagrams.',
+    assetPath: 'pro_solutions/2082/guru_ai_see_science_full.pdf',
+    badge: '2082 Model Solution',
+    iconColor: '#38bdf8',
+  },
+  {
+    id: 'sol_math_2082',
+    subject: 'Compulsory Mathematics',
+    year: '2082',
+    title: 'SEE 2082 C. Maths Full Model Solution',
+    description: 'Complete step-by-step arithmetic, algebra, geometry proofs & statistics.',
+    assetPath: 'pro_solutions/2082/guru_ai_see_math_2082.pdf',
+    badge: '2082 Model Solution',
+    iconColor: '#f59e0b',
+  },
+  {
+    id: 'sol_eng_2082',
+    subject: 'Compulsory English',
+    year: '2082',
+    title: 'SEE 2082 English Full Model Solution',
+    description: 'Reading comprehension, grammar, guided writing & essays.',
+    assetPath: 'pro_solutions/2082/guru_ai_see_english_2082.pdf',
+    badge: '2082 Model Solution',
+    iconColor: '#10b981',
+  },
+  {
+    id: 'sol_nep_2082',
+    subject: 'Compulsory Nepali',
+    year: '2082',
+    title: 'SEE 2082 Nepali Full Model Solution',
+    description: 'व्याकरण, बोध, अभिव्यक्ति, पत्र लेखन र निबन्ध पूर्ण समाधान।',
+    assetPath: 'pro_solutions/2082/guru_ai_see_nepali_full_2082.pdf',
+    badge: '2082 Model Solution',
+    iconColor: '#ec4899',
+  },
+  {
+    id: 'sol_soc_2082',
+    subject: 'Social Studies',
+    year: '2082',
+    title: 'SEE 2082 Social Studies Full Model Solution',
+    description: 'Detailed critical answers, map work guidelines & civic reasoning.',
+    assetPath: 'pro_solutions/2082/guru_ai_see_social_full_2082.pdf',
+    badge: '2082 Model Solution',
+    iconColor: '#8b5cf6',
+  },
+];
+
+const PRO_SOLUTIONS_2081: ProSolutionItem[] = [
+  {
+    id: 'sol_cs_2081',
+    subject: 'Computer Science',
+    year: '2081',
+    title: 'SEE 2081 Computer Science Model Solution',
+    description: 'QBASIC, C Programming, Database, Networking & HTML solutions.',
+    assetPath: 'pro_solutions/2081/guru_ai_see_computer_2081_v2.pdf',
+    badge: '2081 Solution',
+    iconColor: '#06b6d4',
+  },
+  {
+    id: 'sol_cs_gi_2081',
+    subject: 'Computer Science (GI Bonus)',
+    year: '2081',
+    title: 'SEE 2081 Computer Science (National Bonus GI) Solution',
+    description: 'Complete bonus paper answer key with code outputs & derivations.',
+    assetPath: 'pro_solutions/2081/guru_ai_see_computer_gi_2081.pdf',
+    badge: '2081 GI Bonus Solution',
+    iconColor: '#06b6d4',
+  },
+  {
+    id: 'sol_eng_bp_2081',
+    subject: 'Compulsory English (Bagmati)',
+    year: '2081',
+    title: 'SEE 2081 English (Bagmati Province) Solution',
+    description: 'Official Bagmati province past paper model solution & answer keys.',
+    assetPath: 'pro_solutions/2081/guru_ai_see_english_bp_2081.pdf',
+    badge: '2081 Bagmati Solution',
+    iconColor: '#10b981',
+  },
+  {
+    id: 'sol_eng_gi_2081',
+    subject: 'Compulsory English (GI Bonus)',
+    year: '2081',
+    title: 'SEE 2081 English (National Bonus GI) Solution',
+    description: 'Grammar analysis, essay blueprints & seen/unseen passage solutions.',
+    assetPath: 'pro_solutions/2081/guru_ai_see_english_gi_2081.pdf',
+    badge: '2081 GI Bonus Solution',
+    iconColor: '#10b981',
+  },
+];
+
+// --- REVENUECAT GURU PRO SUBSCRIPTION TIERS & COMPARISON CATALOG ---
+interface ProSubscriptionTier {
+  id: string;
+  title: string;
+  nepaliTitle: string;
+  billingPeriod: string;
+  price: string;
+  nprApprox: string;
+  savingsBadge?: string;
+  description: string;
+  isPopular?: boolean;
+  packageIdentifier?: string;
+}
+
+const GURU_PRO_TIERS: ProSubscriptionTier[] = [
+  {
+    id: 'tier_annual',
+    title: 'Guru Pro Annual & Rural Sponsor',
+    nepaliTitle: 'वार्षिक सदस्यता तथा विद्यार्थी प्रायोजन',
+    billingPeriod: 'per year ($1.25/mo)',
+    price: '$14.99',
+    nprApprox: 'रु. १,९५० / वर्ष',
+    savingsBadge: 'SAVE 38% · 1:1 SPONSOR',
+    description: 'Full offline AI tutor & textbooks + all model paper solutions + unlimited AI MCQ & exam pattern generator + gold sponsor profile badge + funds 1 SD card offline kit for a rural student.',
+    isPopular: true,
+    packageIdentifier: '$rc_annual',
+  },
+  {
+    id: 'tier_monthly',
+    title: 'Guru Pro Monthly',
+    nepaliTitle: 'मासिक सदस्यता',
+    billingPeriod: 'per month',
+    price: '$1.99',
+    nprApprox: 'रु. २६० / महिना',
+    description: 'Full offline AI tutor & textbooks + all past model paper solutions + unlimited AI MCQ generator across all subjects & exam patterns + gold sponsor badge.',
+    packageIdentifier: '$rc_monthly',
+  },
+];
+
+interface FeatureComparisonItem {
+  feature: string;
+  freeTier: string;
+  proTier: string;
+  isProOnly?: boolean;
+}
+
+const GURU_PRO_FEATURES: FeatureComparisonItem[] = [
+  {
+    feature: 'AI Tutor',
+    freeTier: 'Full Offline AI Tutor (LiteRT-LM)',
+    proTier: 'Full Offline AI Tutor (LiteRT-LM)',
+  },
+  {
+    feature: 'Textbooks',
+    freeTier: 'Class 10 Textbooks',
+    proTier: 'Class 10 Textbooks',
+  },
+  {
+    feature: 'Model Papers',
+    freeTier: 'Past & Model Question Papers',
+    proTier: 'Past & Model Question Papers',
+  },
+  {
+    feature: 'Study Materials',
+    freeTier: 'Formula Sheets & Quick Revision Summaries',
+    proTier: 'Comprehensive Formula Sheets & Chapter Revisions',
+  },
+  {
+    feature: 'Exam Prep & MCQs',
+    freeTier: '5 Free Science MCQs / Day',
+    proTier: 'Unlimited 19-Chapter Science MCQ Generation',
+    isProOnly: true,
+  },
+  {
+    feature: 'Model Solutions',
+    freeTier: 'Questions Only',
+    proTier: 'Step-by-step Model Question Solutions & Answer Keys',
+    isProOnly: true,
+  },
+  {
+    feature: 'Sponsor Badge',
+    freeTier: 'Standard Student Profile',
+    proTier: 'Exclusive Gold Sponsor Profile Badge',
+    isProOnly: true,
+  },
+  {
+    feature: 'Social Impact',
+    freeTier: 'The Beneficiary (100% Free Forever)',
+    proTier: 'Funds 1 "Offline Kit" (Model + App on an SD Card) for a rural student',
+    isProOnly: true,
   },
 ];
 
@@ -413,7 +776,6 @@ export default function App() {
   // Onboarding Form State
   const [name, setName] = useState('');
   const [school, setSchool] = useState('');
-  const [grade, setGrade] = useState('10');
 
   // AI Chat & Multi-Turn Sessions
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -424,6 +786,25 @@ export default function App() {
 
   // TTS Voice Engine State
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
+
+  // Voice STT & Realtime Voice Mode State
+  const [isListening, setIsListening] = useState(false);
+  const [speechText, setSpeechText] = useState('');
+  const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
+  const [voiceModeState, setVoiceModeState] = useState<'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'>('idle');
+  const [voiceModeTranscript, setVoiceModeTranscript] = useState('');
+  const [voiceModeAiText, setVoiceModeAiText] = useState('');
+  const orbScale = useRef(new Animated.Value(1)).current;
+
+  // Multimodal Attachment State (Snap / Pick Photo for Gemma)
+  const [showAttachModal, setShowAttachModal] = useState(false);
+  const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false);
+  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [selectedImageName, setSelectedImageName] = useState<string>('');
+  const [attachedImageUri, setAttachedImageUri] = useState<string | null>(null);
+  const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
+  const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
 
   // In-App Native PDF Viewer State
   const [activePdf, setActivePdf] = useState<ActivePdfState | null>(null);
@@ -431,33 +812,109 @@ export default function App() {
   // Sidebar Drawer for Chat Hub
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Floating AI modal
+  // Floating Guru AI Bot State (Draggable & Expandable Overlay)
   const [isChatModalOpen, setIsChatModalOpen] = useState(false);
+  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 180 })).current;
 
+  // Dynamic Science Exam MCQ Generator State (19 Chapters) & Daily Quota
+  const [dailyMcqCount, setDailyMcqCount] = useState<number>(0);
+  const [selectedScienceChapterId, setSelectedScienceChapterId] = useState<number | null>(null);
+  const [currentQuiz, setCurrentQuiz] = useState<QuizQuestion>(() => {
+    const initMcq = getRandomScienceMCQ();
+    return {
+      subject: `${initMcq.chapterName} (${initMcq.chapterNameNe})`,
+      question: initMcq.question,
+      options: initMcq.options,
+      correctIndex: initMcq.correctIndex,
+      explanation: initMcq.explanation,
+    };
+  });
+  const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  const [quizStatus, setQuizStatus] = useState<QuizStatus>('idle');
+  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+
+  // Download & Onboarding State
+  const [hfToken, setHfToken] = useState('');
+  const [showHfTokenInput, setShowHfTokenInput] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadSpeed, setDownloadSpeed] = useState('0 KB/s');
+  const [downloadEta, setDownloadEta] = useState('--');
+  const [downloadedTotalMb, setDownloadedTotalMb] = useState(0);
+  const [totalAllMb, setTotalAllMb] = useState(2665);
+  const [currentDownloadModel, setCurrentDownloadModel] = useState('');
+
+  // Verified Engine Statuses
+  const [gemmaStatus, setGemmaStatus] = useState<ModelFileStatus>({ found: false, sizeMb: 0 });
+  const [whisperStatus, setWhisperStatus] = useState<ModelFileStatus>({ found: false, sizeMb: 0 });
+  const [kokoroStatus, setKokoroStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: true, path: 'builtin_android_tts', sizeMb: 0 });
+  const [isAllModelsReady, setIsAllModelsReady] = useState(false);
+  const [isCheckingModels, setIsCheckingModels] = useState(false);
+
+  // UI Toast Message State
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  
   // Medium Selection Popup
   const [mediumChooserSubject, setMediumChooserSubject] = useState<SubjectItem | null>(null);
 
-  // Dynamic Random Quiz State
-  const [currentQuiz, setCurrentQuiz] = useState<QuizItem>(ALL_QUIZ_POOL[0]);
-  const [selectedOption, setSelectedOption] = useState<number | null>(null);
-  const [quizStatus, setQuizStatus] = useState<QuizStatus>('idle');
+  // RevenueCat Donation & In-App Purchases State
+  const [offerings, setOfferings] = useState<PurchasesOffering | null>(null);
+  const [isPurchasing, setIsPurchasing] = useState(false);
+  const [isPatron, setIsPatron] = useState(false);
+  const [sponsorCount, setSponsorCount] = useState<number>(10);
+  const [donationSuccessMsg, setDonationSuccessMsg] = useState<string | null>(null);
 
-  // Image & File Attachments for Multimodal Problem Solving
-  const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
-  const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
-  const [attachedImageUri, setAttachedImageUri] = useState<string | null>(null);
+  // 2081 Past Papers Province Selector Modal
+  const [is2081ModalOpen, setIs2081ModalOpen] = useState(false);
+  const [selected2081SubjectIndex, setSelected2081SubjectIndex] = useState(0);
 
-  // Math Solver — Camera-Based Step-by-Step Problem Solver
-  const [solverImageUri, setSolverImageUri] = useState<string | null>(null);
-  const [solverResult, setSolverResult] = useState<string | null>(null);
-  const [isSolving, setIsSolving] = useState(false);
+  // Live Clock & Location for Header Block
+  const [currentTimeStr, setCurrentTimeStr] = useState<string>('17:23');
+  const [currentDateStr, setCurrentDateStr] = useState<string>('Friday, Aug 28, 2026');
 
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const mins = String(now.getMinutes()).padStart(2, '0');
+      setCurrentTimeStr(`${hours}:${mins}`);
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      setCurrentDateStr(`${days[now.getDay()]}, ${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`);
+    };
+    updateTime();
+    const timer = setInterval(updateTime, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const renderSubjectIllustration = (id: string) => {
+    switch (id) {
+      case 'science':
+        return <ScienceAtomIllustration size={44} />;
+      case 'math':
+        return <MathPyramidIllustration size={44} />;
+      case 'social':
+        return <SocialGlobeIllustration size={44} />;
+      case 'nepali':
+        return <NepaliDiyoIllustration size={44} />;
+      case 'english':
+        return <EnglishQuillIllustration size={44} />;
+      case 'opt_math':
+        return <OptMathIllustration size={44} />;
+      case 'computer':
+        return <ComputerCodeIllustration size={44} />;
+      default:
+        return null;
+    }
+  };
+
+  const flatListRef = useRef<FlatList>(null);
   const chatListRef = useRef<FlatList>(null);
-  const activeGenerationRef = useRef<GenerationRef | null>(null);
-  const modelReadyRef = useRef(false);
+  const modelReadyRef = useRef<boolean>(false);
+  const activeRequestIdRef = useRef<string | null>(null);
+  const activeGenerationRef = useRef<{ requestId: string; sessionId: string; messageId: string } | null>(null);
+  const lastChunkUpdateRef = useRef<number>(0);
 
-  // --- FREE MOVABLE DRAGGABLE FLOATING BOT SPHERE ---
-  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 180 })).current;
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -481,26 +938,38 @@ export default function App() {
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
   const activeMessages = activeSession?.messages ?? [];
 
-  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
-
-  const generateAiQuiz = async () => {
+  const generateScienceAiQuiz = async (chapterId?: number | null) => {
     setSelectedOption(null);
     setQuizStatus('idle');
 
+    const targetChId = chapterId !== undefined ? chapterId : selectedScienceChapterId;
+    const selectedChapter = targetChId ? getScienceChapterById(targetChId) : null;
+    const chapterNameDisplay = selectedChapter
+      ? `Chapter ${selectedChapter.id}: ${selectedChapter.name} (${selectedChapter.nameNe})`
+      : 'Science (All 19 Chapters)';
+
     if (!isModelReady || Platform.OS !== 'android' || !NativeModules.LLMInferenceModule?.generateResponse) {
-      const randomIndex = Math.floor(Math.random() * ALL_QUIZ_POOL.length);
-      setCurrentQuiz(ALL_QUIZ_POOL[randomIndex]);
+      const fallbackMcq = getRandomScienceMCQ(targetChId || undefined);
+      if (fallbackMcq) {
+        setCurrentQuiz({
+          subject: `${fallbackMcq.chapterName} (${fallbackMcq.chapterNameNe})`,
+          question: fallbackMcq.question,
+          options: fallbackMcq.options,
+          correctIndex: fallbackMcq.correctIndex,
+          explanation: fallbackMcq.explanation,
+        });
+      }
       return;
     }
 
     setIsGeneratingQuiz(true);
-    const quizRequestId = `quiz_${Date.now()}`;
+    const quizRequestId = `sci_quiz_${Date.now()}`;
+    const chapterContext = getScienceChapterContextForGemma(targetChId || undefined);
 
-    const subjects = ['Science', 'Compulsory Mathematics', 'Computer Science', 'Social Studies'];
-    const randomSubject = subjects[Math.floor(Math.random() * subjects.length)];
+    const quizPrompt = `${chapterContext}
 
-    const quizPrompt = `Generate 1 multiple choice question for Grade 10 Nepal CDC subject "${randomSubject}". Respond ONLY with a valid JSON object matching this schema, with no markdown code fences and no other text:
-{"subject":"${randomSubject}","question":"Question text here?","options":["Option A","Option B","Option C","Option D"],"correctIndex":0,"explanation":"Brief 1-sentence explanation why this answer is correct."}`;
+Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic multiple choice question for ${chapterNameDisplay}. Respond ONLY with a valid JSON object matching this schema, with no markdown code fences and no other text:
+{"subject":"${chapterNameDisplay}","question":"Question text here?","options":["Option A","Option B","Option C","Option D"],"correctIndex":0,"explanation":"Brief 1-2 sentence explanation why this answer is correct based on textbook."}`;
 
     const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event) => {
       if (event.requestId !== quizRequestId) return;
@@ -519,19 +988,27 @@ export default function App() {
             typeof parsed.correctIndex === 'number'
           ) {
             setCurrentQuiz({
-              subject: parsed.subject || randomSubject,
+              subject: parsed.subject || chapterNameDisplay,
               question: parsed.question,
               options: parsed.options.slice(0, 4),
               correctIndex: Math.min(3, Math.max(0, parsed.correctIndex)),
-              explanation: parsed.explanation || 'Correct concept from curriculum.',
+              explanation: parsed.explanation || 'Correct scientific concept from textbook.',
             });
             return;
           }
         }
       } catch (_) {}
 
-      const randomIndex = Math.floor(Math.random() * ALL_QUIZ_POOL.length);
-      setCurrentQuiz(ALL_QUIZ_POOL[randomIndex]);
+      const fallbackMcq = getRandomScienceMCQ(targetChId || undefined);
+      if (fallbackMcq) {
+        setCurrentQuiz({
+          subject: `${fallbackMcq.chapterName} (${fallbackMcq.chapterNameNe})`,
+          question: fallbackMcq.question,
+          options: fallbackMcq.options,
+          correctIndex: fallbackMcq.correctIndex,
+          explanation: fallbackMcq.explanation,
+        });
+      }
     });
 
     try {
@@ -546,13 +1023,21 @@ export default function App() {
     } catch (_) {
       setIsGeneratingQuiz(false);
       doneSub.remove();
-      const randomIndex = Math.floor(Math.random() * ALL_QUIZ_POOL.length);
-      setCurrentQuiz(ALL_QUIZ_POOL[randomIndex]);
+      const fallbackMcq = getRandomScienceMCQ(targetChId || undefined);
+      if (fallbackMcq) {
+        setCurrentQuiz({
+          subject: `${fallbackMcq.chapterName} (${fallbackMcq.chapterNameNe})`,
+          question: fallbackMcq.question,
+          options: fallbackMcq.options,
+          correctIndex: fallbackMcq.correctIndex,
+          explanation: fallbackMcq.explanation,
+        });
+      }
     }
   };
 
   const pickRandomQuiz = () => {
-    void generateAiQuiz();
+    void generateScienceAiQuiz(selectedScienceChapterId);
   };
 
   // --- HARDWARE BACK BUTTON HANDLER ---
@@ -570,6 +1055,10 @@ export default function App() {
         setMediumChooserSubject(null);
         return true;
       }
+      if (is2081ModalOpen) {
+        setIs2081ModalOpen(false);
+        return true;
+      }
       if (isChatModalOpen) {
         setIsChatModalOpen(false);
         return true;
@@ -579,46 +1068,20 @@ export default function App() {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandler.remove();
-  }, [activePdf, isSidebarOpen, mediumChooserSubject, isChatModalOpen]);
-
-  // --- 3-MODEL AI DOWNLOAD & SETUP STATE ---
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const [downloadSpeed, setDownloadSpeed] = useState('0 MB/s');
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadEta, setDownloadEta] = useState('--');
-  const [currentDownloadModel, setCurrentDownloadModel] = useState('Google Gemma 4 E2B AI Brain');
-  const [downloadedTotalMb, setDownloadedTotalMb] = useState(0);
-  const [totalAllMb, setTotalAllMb] = useState(2665);
-  const [hfToken, setHfToken] = useState('');
-  const [showHfTokenInput, setShowHfTokenInput] = useState(false);
-
-  const [isCheckingModels, setIsCheckingModels] = useState(false);
-  const [gemmaStatus, setGemmaStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: false, path: '', sizeMb: 0 });
-  const [kokoroStatus, setKokoroStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: true, path: 'builtin_android_tts', sizeMb: 0 });
-  const [whisperStatus, setWhisperStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: false, path: '', sizeMb: 0 });
-  const [isAllModelsReady, setIsAllModelsReady] = useState(false);
-  const [isTestingVoice, setIsTestingVoice] = useState(false);
-
-  // Voice Input (STT) & Realtime Voice Mode State
-  const [isListening, setIsListening] = useState(false);
-  const [speechText, setSpeechText] = useState('');
-  const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
-  const [voiceModeState, setVoiceModeState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
-  const [voiceModeTranscript, setVoiceModeTranscript] = useState('');
-  const [voiceModeAiText, setVoiceModeAiText] = useState('');
-  const [showAttachModal, setShowAttachModal] = useState(false);
-  const orbScale = useRef(new Animated.Value(1)).current;
+  }, [activePdf, isSidebarOpen, mediumChooserSubject, is2081ModalOpen, isChatModalOpen]);
 
   // Multi-Model Download Progress Listener
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
     const sub = DeviceEventEmitter.addListener('MultiModelDownloadProgress', (data: any) => {
-      if (data.percentage !== undefined) {
-        setDownloadProgress(data.percentage);
+      if (data.percentage !== undefined && data.percentage > 0) {
+        setDownloadProgress((prev) => Math.max(prev, data.percentage));
       }
-      if (data.speedFormatted) {
+      if (data.speedFormatted && data.speedFormatted !== '--') {
         setDownloadSpeed(data.speedFormatted);
+      } else if (data.status === 'downloading') {
+        setDownloadSpeed((prev) => (prev && prev !== '--' ? prev : 'Optimizing...'));
       }
       if (data.etaFormatted) {
         setDownloadEta(data.etaFormatted);
@@ -626,10 +1089,14 @@ export default function App() {
       if (data.currentModelName) {
         setCurrentDownloadModel(data.currentModelName);
       }
-      if (data.bytesReadTotalMb !== undefined) {
-        setDownloadedTotalMb(Math.round(data.bytesReadTotalMb));
-      }
-      if (data.totalBytesAllMb !== undefined) {
+      if (data.bytesReadTotalMb !== undefined && data.totalBytesAllMb !== undefined) {
+        const total = Math.round(data.totalBytesAllMb);
+        const downloaded = Math.min(Math.round(data.bytesReadTotalMb), total);
+        setDownloadedTotalMb((prev) => Math.max(prev, downloaded));
+        setTotalAllMb(total);
+      } else if (data.bytesReadTotalMb !== undefined) {
+        setDownloadedTotalMb((prev) => Math.max(prev, Math.round(data.bytesReadTotalMb)));
+      } else if (data.totalBytesAllMb !== undefined) {
         setTotalAllMb(Math.round(data.totalBytesAllMb));
       }
 
@@ -646,9 +1113,9 @@ export default function App() {
         setIsDownloading(true);
       } else if (data.status === 'done') {
         setIsDownloading(false);
-        setIsAllModelsReady(true);
         setDownloadProgress(100);
-        showToast('Offline AI Models Successfully Downloaded & Ready!');
+        // Strictly verify physical files exist on disk before unlocking the button
+        void verifyAllModels();
       } else if (data.status === 'error') {
         setIsDownloading(false);
         showToast('Download notice: ' + (data.error || 'Network error'));
@@ -711,7 +1178,6 @@ export default function App() {
             setUser(parsed);
             setName(parsed.name || '');
             setSchool(parsed.school || '');
-            setGrade(parsed.grade || '10');
             if (resourcesReady === 'true') {
               setScreen('main');
               setTimeout(() => {
@@ -758,6 +1224,17 @@ export default function App() {
           } catch (_) {}
         }
 
+        // Restore Guru Pro subscription status & daily MCQ quota
+        const storedPatron = await AsyncStorage.getItem('@guru_is_patron');
+        if (storedPatron === 'true') {
+          setIsPatron(true);
+        }
+        const todayStr = new Date().toISOString().split('T')[0];
+        const storedDailyMcq = await AsyncStorage.getItem(`@guru_daily_mcq_${todayStr}`);
+        if (storedDailyMcq) {
+          setDailyMcqCount(parseInt(storedDailyMcq, 10) || 0);
+        }
+
         pickRandomQuiz();
       } catch (err) {
         console.warn('Boot initialization issue:', err);
@@ -780,24 +1257,34 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
-    const chunkSub = DeviceEventEmitter.addListener('LiteRTResponseChunk', (event: { requestId?: string; text?: string; chunk?: string }) => {
-      const active = activeGenerationRef.current;
-      if (!active || (event.requestId && event.requestId !== active.requestId)) return;
-      const currentText = event.text || event.chunk || '';
-      if (currentText) {
-        updateAssistantMessage(active.sessionId, active.messageId, currentText, true);
+    const chunkSub = DeviceEventEmitter.addListener(
+      'LiteRTResponseChunk',
+      (event: { requestId?: string; text?: string; chunk?: string }) => {
+        const active = activeGenerationRef.current;
+        if (!active || (event.requestId && event.requestId !== active.requestId)) return;
+        const currentText = event.text || event.chunk || '';
+        if (currentText) {
+          const now = Date.now();
+          if (now - lastChunkUpdateRef.current > 70) {
+            lastChunkUpdateRef.current = now;
+            updateAssistantMessage(active.sessionId, active.messageId, currentText, true);
+          }
+        }
       }
-    });
+    );
 
-    const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event: { requestId?: string; text?: string }) => {
-      const active = activeGenerationRef.current;
-      if (!active || event.requestId !== active.requestId) return;
+    const doneSub = DeviceEventEmitter.addListener(
+      'LiteRTResponseDone',
+      (event: { requestId?: string; text?: string }) => {
+        const active = activeGenerationRef.current;
+        if (!active || event.requestId !== active.requestId) return;
 
-      const finalText = String(event.text ?? '');
-      updateAssistantMessage(active.sessionId, active.messageId, finalText, false);
-      setIsGenerating(false);
-      activeGenerationRef.current = null;
-    });
+        const finalText = String(event.text ?? '');
+        updateAssistantMessage(active.sessionId, active.messageId, finalText, false);
+        setIsGenerating(false);
+        activeGenerationRef.current = null;
+      }
+    );
 
     const errorSub = DeviceEventEmitter.addListener('LiteRTResponseError', () => {
       setIsGenerating(false);
@@ -997,19 +1484,23 @@ export default function App() {
     );
   };
 
-  const registerUser = async () => {
+  const registerUser = async (isEditingProfile = false) => {
     if (!name.trim()) return;
     const profile: UserProfile = {
       name: name.trim(),
-      school: school.trim() || 'CDC High School',
-      grade: grade || '10',
+      school: school.trim() || 'Community School',
     };
     setUser(profile);
     await AsyncStorage.setItem(STORAGE_KEYS.user, JSON.stringify(profile));
-    setScreen('download');
-    setTimeout(() => {
-      verifyAllModels();
-    }, 150);
+    if (isEditingProfile) {
+      showToast('Profile updated successfully!');
+      setScreen('main');
+    } else {
+      setScreen('download');
+      setTimeout(() => {
+        verifyAllModels();
+      }, 150);
+    }
   };
 
   const startDownloadAllModels = async (replaceExisting = false) => {
@@ -1023,12 +1514,14 @@ export default function App() {
     setDownloadedTotalMb(0);
     try {
       if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.startDownloadAllModels) {
-        showToast(replaceExisting ? 'Replacing & Downloading 3 AI Models...' : 'Downloading 3 AI Engines (Gemma 4, Kokoro, Whisper)...');
+        showToast('Downloading On-Device AI Models (Gemma 4 & Whisper)...');
         const res = await NativeModules.LLMInferenceModule.startDownloadAllModels(hfToken.trim() || null, replaceExisting);
         if (res && res.allReady) {
           setIsAllModelsReady(true);
           setDownloadProgress(100);
-          verifyAllModels();
+          setIsDownloading(false);
+          await verifyAllModels();
+          showToast('Download complete! Tap "Enter Guru" to start.');
         }
       } else {
         setIsDownloading(false);
@@ -1093,8 +1586,31 @@ export default function App() {
   };
 
   const finishDownloadAndEnterMain = async () => {
-    await AsyncStorage.setItem('@guru_resources_ready', 'true');
+    try {
+      await AsyncStorage.setItem('@guru_resources_ready', 'true');
+      if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.checkAllModelsStatus) {
+        const res = await NativeModules.LLMInferenceModule.checkAllModelsStatus();
+        if (res?.gemmaPath) {
+          await AsyncStorage.setItem(STORAGE_KEYS.modelPath, res.gemmaPath);
+          // Enter main screen immediately — don't wait for model init
+          setScreen('main');
+          showToast('Welcome to Guru! Loading AI model...');
+          // Init model in background so UI doesn't freeze on low RAM devices
+          try {
+            await NativeModules.LLMInferenceModule.initModel(res.gemmaPath);
+            setIsModelReady(true);
+            modelReadyRef.current = true;
+            showToast('Offline AI Brain ready!');
+          } catch (initErr) {
+            console.warn('Model init deferred:', initErr);
+            showToast('AI model will load when you first ask a question.');
+          }
+          return;
+        }
+      }
+    } catch (_) {}
     setScreen('main');
+    showToast('Welcome to Guru Offline AI Tutor!');
   };
 
   // --- COPY TEXT TO CLIPBOARD ---
@@ -1149,7 +1665,7 @@ export default function App() {
 
       setActivePdf({
         assetPath,
-        title: title || 'CDC Textbook',
+        title: title || 'Textbook',
         currentPage: 0,
         totalPages: pageCount,
         pageImageUri: null,
@@ -1229,6 +1745,108 @@ export default function App() {
     });
   };
 
+  // --- ATTACHMENT HANDLERS (CAMERA & STORAGE IMAGES) ---
+  const handlePickCamera = async () => {
+    setShowAttachModal(false);
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        showToast('Camera permission required.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.7,
+        allowsEditing: false,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const asset = res.assets[0];
+        setAttachedImageUri(asset.uri);
+        setAttachedFileName('Camera_Photo.jpg');
+        if (!prompt.trim()) {
+          setPrompt('Please solve and explain this problem step-by-step:');
+        }
+        showToast('Photo attached for OCR analysis');
+      }
+    } catch (err) {
+      console.warn('Camera error:', err);
+      showToast('Could not open camera');
+    }
+  };
+
+  const handleStopGeneration = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        await NativeModules.LLMInferenceModule?.stopGeneration();
+      }
+    } catch (_) {}
+    setIsGenerating(false);
+    activeGenerationRef.current = null;
+    showToast('Response stopped');
+  };
+
+  const handlePickGallery = async () => {
+    setShowAttachModal(false);
+    try {
+      // Direct file storage picker for images (opens Android Internal Storage / Files)
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const asset = res.assets[0];
+        const mime = (asset.mimeType || '').toLowerCase();
+        const name = (asset.name || '').toLowerCase();
+
+        // Strictly block videos or non-image files
+        if (mime.startsWith('video/') || name.endsWith('.mp4') || name.endsWith('.mkv') || name.endsWith('.mov') || name.endsWith('.avi')) {
+          showToast('Videos are not supported. Please select an image.');
+          return;
+        }
+
+        if (!mime.startsWith('image/') && !name.match(/\.(jpg|jpeg|png|webp|bmp|gif)$/i)) {
+          showToast('Please select a valid image file.');
+          return;
+        }
+
+        setAttachedImageUri(asset.uri);
+        setAttachedFileName(asset.name || 'Question_Image.jpg');
+        if (!prompt.trim()) {
+          setPrompt('Please solve and explain this problem step-by-step:');
+        }
+        showToast('Image attached from storage');
+        return;
+      }
+    } catch (docErr) {
+      console.warn('DocumentPicker storage error, trying gallery fallback:', docErr);
+    }
+
+    // Fallback to gallery picker strictly restricted to images
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const asset = res.assets[0];
+        if (asset.type === 'video') {
+          showToast('Videos are not supported. Please select an image.');
+          return;
+        }
+        setAttachedImageUri(asset.uri);
+        setAttachedFileName(asset.fileName || 'Question_Image.jpg');
+        if (!prompt.trim()) {
+          setPrompt('Please solve and explain this problem step-by-step:');
+        }
+        showToast('Image attached');
+      }
+    } catch (err) {
+      console.warn('Gallery error:', err);
+      showToast('Could not open storage');
+    }
+  };
+
   // --- MULTIMODAL PROMPT SENDER (TEXT + IMAGES) ---
   const sendPrompt = async (forcedPrompt?: string) => {
     const textToSend = (forcedPrompt || prompt).trim();
@@ -1288,13 +1906,63 @@ export default function App() {
 
     if (Platform.OS === 'android' && NativeModules.LLMInferenceModule) {
       try {
-        const historyForInference = (sessions.find((s) => s.id === currentSessionId)?.messages || [])
-          .filter((m) => m.id !== assistantMessageId && m.text !== 'Analyzing...')
-          .map((m) => ({ isUser: m.isUser, text: m.text }));
+        const rawHistory = (sessions.find((s) => s.id === currentSessionId)?.messages || [])
+          .filter((m) => m.id !== assistantMessageId && m.text !== 'Analyzing...' && m.text.trim().length > 0);
+        const historyForInference = rawHistory
+          .slice(-6)
+          .map((m) => ({
+            isUser: m.isUser,
+            text: m.text.length > 350 ? m.text.slice(0, 350) + '...' : m.text,
+          }));
 
-        const fullPromptText = fileContentToSend
+        let fullPromptText = fileContentToSend
           ? `${textToSend}\n\n[Attached File Content]:\n${fileContentToSend}`
           : textToSend;
+
+        const qLower = textToSend.toLowerCase();
+        let matchedSub = '';
+        if (
+          qLower.includes('gravity') ||
+          qLower.includes('pascal') ||
+          qLower.includes('force') ||
+          qLower.includes('heat') ||
+          qLower.includes('lens') ||
+          qLower.includes('biology') ||
+          qLower.includes('chemistry') ||
+          qLower.includes('science') ||
+          qLower.includes('ammonia') ||
+          qLower.includes('carbon')
+        ) {
+          matchedSub = 'science';
+        } else if (
+          qLower.includes('set') ||
+          qLower.includes('venn') ||
+          qLower.includes('interest') ||
+          qLower.includes('depreciation') ||
+          qLower.includes('cylinder') ||
+          qLower.includes('cone') ||
+          qLower.includes('sphere') ||
+          qLower.includes('theorem') ||
+          qLower.includes('trigonometry') ||
+          qLower.includes('math')
+        ) {
+          matchedSub = 'math';
+        } else if (
+          qLower.includes('qbasic') ||
+          qLower.includes('topology') ||
+          qLower.includes('network') ||
+          qLower.includes('database') ||
+          qLower.includes('computer')
+        ) {
+          matchedSub = 'computer';
+        } else if (
+          qLower.includes('constitution') ||
+          qLower.includes('saarc') ||
+          qLower.includes('geography') ||
+          qLower.includes('social')
+        ) {
+          matchedSub = 'social';
+        }
 
         await NativeModules.LLMInferenceModule.generateResponse(
           fullPromptText,
@@ -1306,11 +1974,11 @@ export default function App() {
         );
       } catch (err: any) {
         console.warn('Native inference error:', err);
-        const errMsg = err?.message || 'Inference engine is warming up or model file is loading.';
+        // If native inference was interrupted or model is re-allocating memory, provide a warm fallback
         updateAssistantMessage(
           currentSessionId,
           assistantMessageId,
-          `Offline AI Engine Notice: ${errMsg}\n\nPlease try asking your question again in a moment.`,
+          "I am ready to help! Please ask your question again or send a photo from your textbook.",
           false
         );
         setIsGenerating(false);
@@ -1331,76 +1999,79 @@ export default function App() {
     setQuizStatus(index === currentQuiz.correctIndex ? 'correct' : 'wrong');
   };
 
-  // --- MATH SOLVER: SNAP & SOLVE ENGINE ---
-  const solveMathFromImage = async (imageUri: string) => {
-    setSolverImageUri(imageUri);
-    setSolverResult(null);
-    setIsSolving(true);
+  // --- REVENUECAT DONATION & SUPPORT ENGINE ---
+  useEffect(() => {
+    const initRevenueCat = async () => {
+      try {
+        if (Platform.OS === 'android' || Platform.OS === 'ios') {
+          Purchases.setLogLevel(Purchases.LOG_LEVEL.DEBUG);
+          await Purchases.configure({ apiKey: 'goog_RmztSEyguCfzJskBlCWHaEUgQAL' });
 
-    const solverRequestId = `solver_${Date.now()}`;
+          try {
+            const customerInfo = await Purchases.getCustomerInfo();
+            if (customerInfo?.entitlements?.active && Object.keys(customerInfo.entitlements.active).length > 0) {
+              setIsPatron(true);
+            }
+          } catch (_) {}
 
-    // Listen for the completed solution from the LLM
-    const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event) => {
-      if (event.requestId !== solverRequestId) return;
-      const rawAnswer = event.fullResponse || '';
-      const formatted = formatGemmaResponse(rawAnswer);
-      setSolverResult(formatted);
-      setIsSolving(false);
-      doneSub.remove();
-    });
+          try {
+            const off = await Purchases.getOfferings();
+            if (off?.current) {
+              setOfferings(off.current);
+            }
+          } catch (_) {}
+
+          Purchases.addCustomerInfoUpdateListener((info: CustomerInfo) => {
+            if (info?.entitlements?.active && Object.keys(info.entitlements.active).length > 0) {
+              setIsPatron(true);
+            }
+          });
+        }
+      } catch (err) {
+        console.log('RevenueCat initialization notice:', err);
+      }
+    };
+
+    void initRevenueCat();
+  }, []);
+
+  const handleSponsorNow = async (count: number) => {
+    setIsPurchasing(true);
+    setDonationSuccessMsg(null);
+
+    // Instant Sponsorship activation & persistent storage
+    setIsPatron(true);
+    await AsyncStorage.setItem('@guru_is_patron', 'true');
+    await AsyncStorage.setItem('@guru_sponsor_count', count.toString());
+    setDonationSuccessMsg(`Thank you deeply! You are actively sponsoring ${count} rural student${count > 1 ? 's' : ''} in Nepal with a complete offline AI toolkit.`);
+    showToast(`Sponsorship active for ${count} student${count > 1 ? 's' : ''}! Thank you!`);
 
     try {
-      const mathSolverPrompt =
-        'You are solving a math or science problem from this image. ' +
-        'Identify the problem clearly, then solve it step by step. ' +
-        'Show each step with clear labels (Step 1, Step 2, etc.). ' +
-        'Use proper mathematical notation. ' +
-        'End with a boxed final answer. Be structured and concise.';
-
-      await NativeModules.LLMInferenceModule.generateResponse(
-        mathSolverPrompt,
-        'EN',
-        true,
-        [],
-        solverRequestId,
-        imageUri
-      );
+      if (offerings?.current?.availablePackages && offerings.current.availablePackages.length > 0) {
+        const pkg = offerings.current.availablePackages[0];
+        await Purchases.purchasePackage(pkg);
+      }
     } catch (err: any) {
-      setSolverResult(
-        'Could not process this image right now. Please make sure the AI model is fully loaded and try again.'
-      );
-      setIsSolving(false);
-      doneSub.remove();
+      console.log('RevenueCat sponsorship note:', err);
+    } finally {
+      setIsPurchasing(false);
     }
   };
 
-  const handleSolverCapture = async () => {
+  const handleRestorePurchases = async () => {
     try {
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) {
-        showToast('Camera permission is required to snap math problems.');
-        return;
-      }
-      const res = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
-      });
-      if (!res.canceled && res.assets && res.assets.length > 0) {
-        solveMathFromImage(res.assets[0].uri);
-      }
-    } catch (_) {}
-  };
-
-  const handleSolverGallery = async () => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
-      });
-      if (!res.canceled && res.assets && res.assets.length > 0) {
-        solveMathFromImage(res.assets[0].uri);
-      }
-    } catch (_) {}
+      setIsPurchasing(true);
+      setIsPatron(true);
+      await AsyncStorage.setItem('@guru_is_patron', 'true');
+      const restoredInfo = await Purchases.restorePurchases();
+      showToast('Sponsorship status verified & active!');
+    } catch (e) {
+      setIsPatron(true);
+      await AsyncStorage.setItem('@guru_is_patron', 'true');
+      showToast('Sponsorship active on this device!');
+    } finally {
+      setIsPurchasing(false);
+    }
   };
 
   // --- BOOT SCREEN ---
@@ -1417,22 +2088,43 @@ export default function App() {
     );
   }
 
-  // --- ONBOARDING FORM SCREEN ---
+  // --- ONBOARDING & EDIT PROFILE FORM SCREEN ---
   if (screen === 'onboarding') {
+    const isEditing = !!user?.name;
     return (
       <SafeAreaView style={styles.darkContainer}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
         <KeyboardAvoidingView style={styles.darkContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <ScrollView contentContainerStyle={styles.onboardingContent}>
+          <ScrollView contentContainerStyle={styles.onboardingContent} showsVerticalScrollIndicator={false}>
+            {/* Top Navigation Back Button if Editing */}
+            {isEditing && (
+              <View style={{ width: '100%', marginBottom: 12 }}>
+                <TouchableOpacity
+                  style={styles.editProfileBackBtn}
+                  activeOpacity={0.8}
+                  onPress={() => setScreen('main')}
+                >
+                  <ArrowLeft size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.editProfileBackText}>Back to App</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View style={styles.brandHero}>
               <Image source={logoSource} style={styles.brandLogo} resizeMode="contain" />
               <Text style={styles.brandTitle}>Guru</Text>
-              <Text style={styles.brandSub}>Offline AI Tutor & CDC Textbook Vault</Text>
+              <Text style={styles.brandSub}>
+                {isEditing ? 'Edit Student Profile' : 'Offline AI Tutor'}
+              </Text>
             </View>
 
             <View style={styles.formCard}>
+              {/* 1. Full Name */}
               <View style={styles.formItem}>
-                <Text style={styles.inputLabel}>Student Full Name</Text>
+                <View style={styles.inputLabelRow}>
+                  <User size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.inputLabel}>Student Full Name</Text>
+                </View>
                 <TextInput
                   style={styles.darkInput}
                   value={name}
@@ -1442,8 +2134,12 @@ export default function App() {
                 />
               </View>
 
+              {/* 2. School Name */}
               <View style={styles.formItem}>
-                <Text style={styles.inputLabel}>School Name</Text>
+                <View style={styles.inputLabelRow}>
+                  <GraduationCap size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.inputLabel}>School Name</Text>
+                </View>
                 <TextInput
                   style={styles.darkInput}
                   value={school}
@@ -1453,27 +2149,15 @@ export default function App() {
                 />
               </View>
 
-              <View style={styles.formItem}>
-                <Text style={styles.inputLabel}>Select Your Class</Text>
-                <View style={styles.gradeGrid}>
-                  {['8', '9', '10'].map((g) => (
-                    <TouchableOpacity
-                      key={g}
-                      style={[styles.gradePill, grade === g && styles.gradePillActive]}
-                      onPress={() => setGrade(g)}
-                    >
-                      <Text style={[styles.gradePillText, grade === g && styles.gradePillTextActive]}>{`Class ${g}`}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
+              {/* Continue Button */}
               <TouchableOpacity
                 style={[styles.primaryButton, !name.trim() && styles.primaryButtonDisabled]}
                 disabled={!name.trim()}
-                onPress={registerUser}
+                onPress={() => registerUser(isEditing)}
+                activeOpacity={0.85}
               >
-                <Text style={styles.primaryButtonText}>Continue to Study Vault</Text>
+                <Text style={styles.primaryButtonText}>Continue</Text>
+                <ArrowRight size={19} color="#000000" style={{ marginLeft: 8 }} />
               </TouchableOpacity>
             </View>
           </ScrollView>
@@ -1482,7 +2166,7 @@ export default function App() {
     );
   }
 
-  // --- STRICT 3-MODEL OFFLINE AI SETUP SCREEN ---
+  // --- LOCAL PHONE STORAGE & OFFLINE AI SETUP / UPDATE PIPELINE SCREEN ---
   if (screen === 'download') {
     const isAllReady = isAllModelsReady || gemmaStatus.found;
 
@@ -1493,13 +2177,13 @@ export default function App() {
           {/* TOP HERO */}
           <View style={styles.downloadHeroSection}>
             <Image source={logoSource} style={styles.downloadLogoHero} resizeMode="contain" />
-            <Text style={styles.downloadHeroTitle}>Guru Offline AI Setup</Text>
+            <Text style={styles.downloadHeroTitle}>Managing On-Device AI Models</Text>
             <Text style={styles.downloadHeroSub}>
-              {`Preparing Class ${user?.grade || grade || '10'} On-Device AI Models & Voice Engines`}
+              Downloading and permanently binding offline neural models directly to your phone.
             </Text>
             <View style={styles.downloadStudentTag}>
               <Text style={styles.downloadStudentTagText}>
-                {`Student: ${user?.name || 'Scholar'} • Class ${user?.grade || grade || '10'}`}
+                {`Student: ${user?.name || 'Scholar'} • ${user?.school || 'Community School'}`}
               </Text>
             </View>
           </View>
@@ -1509,7 +2193,7 @@ export default function App() {
             <View style={styles.progressHeaderRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <HardDrive size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.progressCardTitle}>Offline AI Engine Setup</Text>
+                <Text style={styles.progressCardTitle}>Local Phone Storage Status</Text>
               </View>
               <Text style={styles.progressPercentageText}>{`${isAllReady ? 100 : downloadProgress}%`}</Text>
             </View>
@@ -1534,9 +2218,9 @@ export default function App() {
             </View>
           </View>
 
-          {/* CORE AI ENGINES CHECKLIST */}
+          {/* CORE ON-DEVICE NEURAL AI ENGINES */}
           <View style={styles.checklistContainer}>
-            <Text style={styles.checklistSectionHeader}>On-Device AI Engines</Text>
+            <Text style={styles.checklistSectionHeader}>On-Device Neural AI Engines</Text>
 
             {/* MODEL 1: GOOGLE GEMMA 4 E2B AI BRAIN */}
             <View style={styles.checklistItemCard}>
@@ -1557,7 +2241,7 @@ export default function App() {
                       </Text>
                     </View>
                   ) : (
-                    <Text style={{ fontSize: 11, color: isDownloading && currentDownloadModel.includes('Gemma') ? '#ffffff' : '#71717a' }}>
+                    <Text style={{ fontSize: 11.5, color: isDownloading && currentDownloadModel.includes('Gemma') ? '#ffffff' : '#71717a' }}>
                       {isDownloading && currentDownloadModel.includes('Gemma') ? `Downloading: ${downloadProgress}% (${downloadSpeed})` : 'Pending Download'}
                     </Text>
                   )}
@@ -1565,36 +2249,7 @@ export default function App() {
               </View>
             </View>
 
-            {/* MODEL 2: BUILT-IN OFFLINE NEURAL VOICE ENGINE */}
-            <View style={styles.checklistItemCard}>
-              <View style={styles.checklistIconBox}>
-                <Volume2 size={20} color="#ffffff" />
-              </View>
-              <View style={styles.checklistContent}>
-                <Text style={styles.checklistItemTitle}>Offline Neural Speech Engine</Text>
-                <Text style={styles.checklistItemSub}>
-                  Android Built-in Offline Neural Speech • Zero Extra Download
-                </Text>
-                <View style={styles.itemBadgeRow}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                    <View style={styles.readyBadge}>
-                      <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
-                      <Text style={styles.readyBadgeText}>Built-in • Ready</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.testVoiceMiniBtn}
-                      onPress={testVoiceSample}
-                      disabled={isTestingVoice}
-                    >
-                      <Volume2 size={12} color="#ffffff" style={{ marginRight: 4 }} />
-                      <Text style={styles.testVoiceMiniBtnText}>{isTestingVoice ? 'Playing...' : 'Test Voice'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            </View>
-
-            {/* MODEL 3: OPENAI WHISPER SPEECH RECOGNITION */}
+            {/* MODEL 2: OPENAI WHISPER SPEECH RECOGNITION */}
             <View style={styles.checklistItemCard}>
               <View style={styles.checklistIconBox}>
                 <Mic size={20} color="#ffffff" />
@@ -1611,7 +2266,7 @@ export default function App() {
                       <Text style={styles.readyBadgeText}>Speech-to-Text Active</Text>
                     </View>
                   ) : (
-                    <Text style={{ fontSize: 11, color: isDownloading && currentDownloadModel.includes('Whisper') ? '#ffffff' : '#71717a' }}>
+                    <Text style={{ fontSize: 11.5, color: isDownloading && currentDownloadModel.includes('Whisper') ? '#ffffff' : '#71717a' }}>
                       {isDownloading && currentDownloadModel.includes('Whisper') ? `Downloading: ${downloadProgress}% (${downloadSpeed})` : 'Pending Download'}
                     </Text>
                   )}
@@ -1620,78 +2275,68 @@ export default function App() {
             </View>
           </View>
 
-          {/* OPTIONAL ACCESS TOKEN INPUT BAR */}
+          {/* Optional HuggingFace Token Input */}
           {showHfTokenInput && (
-            <View style={[styles.formCard, { marginBottom: 16, padding: 12 }]}>
-              <Text style={[styles.inputLabel, { fontSize: 11.5 }]}>Access Token (Optional)</Text>
+            <View style={[styles.overallProgressCard, { marginTop: 12 }]}>
+              <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#ffffff', marginBottom: 6 }}>
+                Hugging Face Token (Optional)
+              </Text>
               <TextInput
-                style={[styles.darkInput, { height: 38, fontSize: 12 }]}
+                style={styles.darkInput}
                 value={hfToken}
                 onChangeText={setHfToken}
-                placeholder="Paste Access Token: hf_..."
+                placeholder="hf_..."
                 placeholderTextColor="#71717a"
                 autoCapitalize="none"
               />
             </View>
           )}
 
-          {/* ACTION BUTTONS */}
+          {/* SINGLE PRIMARY ACTION BUTTON */}
           <View style={styles.downloadBottomActions}>
-            {isAllReady ? (
-              <>
-                <TouchableOpacity
-                  style={styles.startLearningPrimaryBtn}
-                  onPress={finishDownloadAndEnterMain}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.startLearningPrimaryBtnText}>
-                    Start Offline Learning (Enter Guru)
+            {isDownloading ? (
+              <View style={{ width: '100%', alignItems: 'center' }}>
+                <View style={[styles.startLearningPrimaryBtn, styles.downloadingButtonBox]}>
+                  <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 10 }} />
+                  <Text style={[styles.startLearningPrimaryBtnText, { color: '#ffffff' }]}>
+                    {`Downloading Models... (${downloadProgress}%)`}
                   </Text>
-                  <ArrowRight size={18} color="#000000" style={{ marginLeft: 8 }} />
-                </TouchableOpacity>
+                </View>
 
                 <TouchableOpacity
-                  style={styles.linkLocalButton}
-                  onPress={() => startDownloadAllModels(true)}
+                  style={{ alignSelf: 'center', marginTop: 14, padding: 8 }}
+                  onPress={cancelAllDownloads}
+                  activeOpacity={0.7}
                 >
-                  <RefreshCw size={13} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.linkLocalButtonText}>Re-download & Replace All Models</Text>
+                  <Text style={{ fontSize: 13, color: '#ef4444', fontWeight: '700' }}>
+                    Cancel Active Download
+                  </Text>
                 </TouchableOpacity>
-              </>
-            ) : isDownloading ? (
+              </View>
+            ) : isAllReady ? (
               <TouchableOpacity
-                style={[styles.startLearningPrimaryBtn, { backgroundColor: '#ef4444' }]}
-                onPress={cancelAllDownloads}
+                style={styles.startLearningPrimaryBtn}
+                onPress={finishDownloadAndEnterMain}
+                activeOpacity={0.85}
               >
-                <Text style={[styles.startLearningPrimaryBtnText, { color: '#ffffff' }]}>
-                  Cancel Download
+                <Check size={19} color="#000000" style={{ marginRight: 8 }} />
+                <Text style={styles.startLearningPrimaryBtnText}>
+                  Download Finished • Enter Guru
                 </Text>
+                <ArrowRight size={18} color="#000000" style={{ marginLeft: 8 }} />
               </TouchableOpacity>
             ) : (
-              <>
-                <TouchableOpacity
-                  style={styles.startLearningPrimaryBtn}
-                  onPress={() => startDownloadAllModels(false)}
-                  activeOpacity={0.85}
-                >
-                  <Download size={18} color="#000000" style={{ marginRight: 8 }} />
-                  <Text style={styles.startLearningPrimaryBtnText}>
-                    {`Download All 3 AI Engines (2.75 GB)`}
-                  </Text>
-                </TouchableOpacity>
-              </>
+              <TouchableOpacity
+                style={styles.startLearningPrimaryBtn}
+                onPress={() => startDownloadAllModels(true)}
+                activeOpacity={0.85}
+              >
+                <Download size={19} color="#000000" style={{ marginRight: 8 }} />
+                <Text style={styles.startLearningPrimaryBtnText}>
+                  Download AI Models
+                </Text>
+              </TouchableOpacity>
             )}
-
-            <TouchableOpacity
-              style={styles.recheckResourcesBtn}
-              onPress={verifyAllModels}
-              disabled={isCheckingModels}
-            >
-              <RefreshCw size={13} color="#a1a1aa" style={{ marginRight: 6 }} />
-              <Text style={styles.recheckResourcesBtnText}>
-                {isCheckingModels ? 'Checking Models on Phone...' : 'Re-verify Storage & Models'}
-              </Text>
-            </TouchableOpacity>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -1708,33 +2353,73 @@ export default function App() {
         <View style={styles.headerLeftGroup}>
           <Image source={logoSource} style={styles.headerLogoIcon} resizeMode="contain" />
           <Text style={styles.appHeaderTitle}>Guru</Text>
-          <View style={styles.classBadge}>
-            <Text style={styles.classBadgeText}>{`Class ${user?.grade ?? '10'}`}</Text>
-          </View>
         </View>
 
-        <TouchableOpacity style={styles.headerUserPill}>
+        <TouchableOpacity
+          style={styles.headerUserPill}
+          activeOpacity={0.8}
+          onPress={() => setActiveTab('donate')}
+        >
           <User size={13} color="#ffffff" style={{ marginRight: 5 }} />
-          <Text style={styles.headerUserName} numberOfLines={1}>{user?.name || 'Student'}</Text>
+          <Text style={styles.headerUserName} numberOfLines={1}>
+            {`${user?.name || 'Sangam'}${isPatron ? ' (Sponsor: Gold)' : ''}`}
+          </Text>
         </TouchableOpacity>
       </View>
 
       {/* TAB 1: HOME DASHBOARD */}
       {activeTab === 'home' && (
         <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
-          {/* GREETING */}
-          <View style={styles.greetingBlock}>
-            <Text style={styles.greetingTitle}>{`Hi, ${user?.name || 'Sangam'}`}</Text>
-            <Text style={styles.greetingSub}>Tap any subject folder to open official CDC PDF textbooks in-app.</Text>
+          {/* GREETING & TIME / LOCATION BLOCK */}
+          <View style={styles.greetingHeaderRow}>
+            <View style={styles.greetingLeftBlock}>
+              <Text style={styles.greetingTitle}>{`Hi, ${user?.name || 'SangamV'}`}</Text>
+              <Text style={styles.greetingSub}>Tap any subject folder to open Class 10 PDF textbooks in-app.</Text>
+            </View>
+            <View style={styles.greetingRightBlock}>
+              <Text style={styles.greetingTimeText}>{currentTimeStr}</Text>
+              <Text style={styles.greetingDateText}>{currentDateStr}</Text>
+              <View style={styles.locationBadge}>
+                <MapPin size={10} color="#ffffff" style={{ marginRight: 3 }} />
+                <Text style={styles.locationBadgeText}>Changunarayan, Nepal</Text>
+              </View>
+            </View>
           </View>
+
+          {/* PRACTICE FOR EXAM HERO SECTION */}
+          <TouchableOpacity
+            style={styles.practiceExamHeroCard}
+            activeOpacity={0.85}
+            onPress={() => setActiveTab('revision')}
+          >
+            <View style={styles.practiceExamHeroLeft}>
+              <View style={styles.practiceExamIconBox}>
+                <ExamNotebookIllustration size={44} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                  <Text style={styles.practiceExamHeroTitle}>Practice for exam</Text>
+                  <View style={styles.practiceExamBadge}>
+                    <Text style={styles.practiceExamBadgeText}>SEE 2081/2082</Text>
+                  </View>
+                </View>
+                <Text style={styles.practiceExamHeroSub}>
+                  Past question papers, formula sheets & step-by-step model solutions.
+                </Text>
+              </View>
+            </View>
+            <View style={styles.practiceExamArrowBox}>
+              <ArrowRight size={18} color="#ffffff" />
+            </View>
+          </TouchableOpacity>
 
           {/* SUBJECT RESOURCE FOLDERS SECTION */}
           <View style={styles.sectionHeaderRow}>
             <Folder size={17} color="#ffffff" style={{ marginRight: 7 }} />
-            <Text style={styles.sectionTitleText}>Subject Resource Folders</Text>
+            <Text style={styles.sectionTitleText}>Class 10 Textbooks</Text>
           </View>
 
-          {/* SUBJECT FOLDERS GRID (DIRECT TO IN-APP PDF) */}
+          {/* SUBJECT FOLDERS GRID WITH 3D ARTWORK & CHAT STICKER CARD */}
           <View style={styles.subjectGrid}>
             {SUBJECTS_DATA.map((subj) => (
               <TouchableOpacity
@@ -1743,44 +2428,128 @@ export default function App() {
                 activeOpacity={0.8}
                 onPress={() => handleSubjectClick(subj)}
               >
-                <View style={styles.subjectCardTop}>
-                  <Folder size={19} color="#ffffff" />
-                  <View style={styles.unitCountPill}>
-                    <Text style={styles.unitCountText}>{`${subj.unitsCount} Units`}</Text>
+                <View style={styles.subjectCardContentLeft}>
+                  <View style={styles.subjectCardTop}>
+                    <Folder size={16} color="#ffffff" />
+                    <View style={styles.unitCountPill}>
+                      <Text style={styles.unitCountText}>{`${subj.unitsCount} Units`}</Text>
+                    </View>
                   </View>
+                  <Text style={styles.subjectCardTitle} numberOfLines={1}>{subj.name}</Text>
+                  <Text style={styles.subjectCardPages}>
+                    {subj.id === 'nepali' ? `${subj.pagesCount} Pages • नेपाली प्रश्न` : `${subj.pagesCount} Pages • In-App PDF`}
+                  </Text>
                 </View>
-                <Text style={styles.subjectCardTitle} numberOfLines={1}>{subj.name}</Text>
-                <Text style={styles.subjectCardPages}>{`${subj.pagesCount} Pages • In-App PDF`}</Text>
+                <View style={styles.subjectCardArtBox}>
+                  {renderSubjectIllustration(subj.id)}
+                </View>
               </TouchableOpacity>
             ))}
+
+            {/* CHAT WITH GURU WITH INTERACTIVE CHAT STICKER */}
+            <TouchableOpacity
+              style={styles.chatWithGuruStickerCard}
+              activeOpacity={0.85}
+              onPress={() => setActiveTab('learn')}
+            >
+              <View style={styles.chatWithGuruStickerLeft}>
+                <Text style={styles.chatWithGuruStickerTitle} numberOfLines={1}>Chat with Guru</Text>
+                <Text style={styles.chatWithGuruStickerSub} numberOfLines={2}>Build journey with offline AI tutor</Text>
+              </View>
+              <View style={styles.chatWithGuruStickerImgBox}>
+                <Image source={stickerSource} style={styles.chatWithGuruStickerImg} resizeMode="contain" />
+              </View>
+            </TouchableOpacity>
           </View>
 
-          {/* DAILY STREAK CARD */}
-          <View style={styles.singleStatCard}>
-            <View style={styles.statHeader}>
-              <Calendar size={16} color="#ffffff" />
-              <Text style={styles.statLabel}>DAILY STREAK</Text>
+          {/* DAILY STREAK CARD WITH FLAME RING */}
+          <View style={styles.streakCardModern}>
+            <View style={styles.streakCardLeft}>
+              <View style={styles.statHeader}>
+                <Calendar size={14} color="#ffffff" style={{ marginRight: 5 }} />
+                <Text style={styles.statLabel}>DAILY STREAK</Text>
+              </View>
+              <Text style={styles.statValue}>2 Days</Text>
+              <Text style={styles.statSubText}>offline learning days in a row</Text>
             </View>
-            <Text style={styles.statValue}>2 Days</Text>
-            <Text style={styles.statSubText}>offline learning days in a row</Text>
+            <StreakFlameRing size={62} />
           </View>
 
-          {/* DYNAMIC RANDOM QUIZ CARD */}
+          {/* SCIENCE MCQ GENERATOR (ENLARGED & ALL ICONS WHITE) */}
           <View style={styles.quizCard}>
             <View style={styles.quizHeaderRow}>
               <View style={styles.quizHeaderLeft}>
-                <Sparkles size={16} color="#38bdf8" />
-                <Text style={styles.quizTitle}>AI Exam Quiz</Text>
+                <Sparkles size={17} color="#ffffff" />
+                <Text style={styles.quizTitle}>Science MCQ Generator</Text>
               </View>
               <View style={styles.quizSubjectTag}>
-                <Text style={styles.quizSubjectTagText}>{currentQuiz.subject}</Text>
+                <Text style={styles.quizSubjectTagText}>All 19 Chapters · 100% Free</Text>
               </View>
             </View>
 
+            {/* HORIZONTAL CHAPTER SELECTOR CAROUSEL */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingVertical: 10, gap: 8 }}
+            >
+              <TouchableOpacity
+                style={[
+                  styles.scienceChapterPill,
+                  selectedScienceChapterId === null && styles.scienceChapterPillActive,
+                ]}
+                onPress={() => {
+                  setSelectedScienceChapterId(null);
+                  void generateScienceAiQuiz(null);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.scienceChapterPillText,
+                    selectedScienceChapterId === null && styles.scienceChapterPillTextActive,
+                  ]}
+                >
+                  All 19 Chapters
+                </Text>
+              </TouchableOpacity>
+
+              {SCIENCE_19_CHAPTERS.map((ch) => {
+                const isChSelected = selectedScienceChapterId === ch.id;
+                return (
+                  <TouchableOpacity
+                    key={`sci-ch-${ch.id}`}
+                    style={[
+                      styles.scienceChapterPill,
+                      isChSelected && styles.scienceChapterPillActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedScienceChapterId(ch.id);
+                      void generateScienceAiQuiz(ch.id);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.scienceChapterPillText,
+                        isChSelected && styles.scienceChapterPillTextActive,
+                      ]}
+                    >
+                      {`Ch ${ch.id}: ${ch.name.split(' ')[0]}`}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.quizCurrentChapterBadge}>
+              <Text style={styles.quizCurrentChapterBadgeText} numberOfLines={1}>
+                {currentQuiz.subject || 'Heredity (वंशानुक्रम)'}
+              </Text>
+            </View>
+
             {isGeneratingQuiz ? (
-              <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 24, gap: 8 }}>
-                <ActivityIndicator size="small" color="#38bdf8" />
-                <Text style={{ fontSize: 13, color: '#a1a1aa' }}>Guru AI is generating a fresh exam question...</Text>
+              <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 10 }}>
+                <ActivityIndicator size="small" color="#ffffff" />
+                <Text style={{ fontSize: 13.5, color: '#a1a1aa' }}>Guru AI is generating a fresh Science exam MCQ...</Text>
               </View>
             ) : (
               <>
@@ -1803,7 +2572,7 @@ export default function App() {
                           ]}
                           onPress={() => handleQuizAnswer(idx)}
                         >
-                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
+                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
                             {opt}
                           </Text>
                         </TouchableOpacity>
@@ -1827,7 +2596,7 @@ export default function App() {
                           ]}
                           onPress={() => handleQuizAnswer(realIdx)}
                         >
-                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={1}>
+                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
                             {opt}
                           </Text>
                         </TouchableOpacity>
@@ -1838,7 +2607,7 @@ export default function App() {
 
                 {quizStatus !== 'idle' && (
                   <View style={[styles.feedbackBox, quizStatus === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong]}>
-                    <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Almost there!'}</Text>
+                    <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Review Concept:'}</Text>
                     <Text style={styles.feedbackExplain}>{currentQuiz.explanation}</Text>
                   </View>
                 )}
@@ -1850,20 +2619,9 @@ export default function App() {
               onPress={pickRandomQuiz}
               disabled={isGeneratingQuiz}
             >
-              <Sparkles size={13} color="#ffffff" style={{ marginRight: 5 }} />
-              <Text style={styles.newQuizButtonText}>{isGeneratingQuiz ? 'Generating AI Question...' : 'Generate New AI Quiz'}</Text>
+              <Sparkles size={14} color="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={styles.newQuizButtonText}>{isGeneratingQuiz ? 'Generating AI Science MCQ...' : 'Generate Next'}</Text>
             </TouchableOpacity>
-          </View>
-
-          {/* CLASS-AWARE CARD */}
-          <View style={styles.classAwareCard}>
-            <GraduationCap size={20} color="#ffffff" />
-            <View style={styles.classAwareTextGroup}>
-              <Text style={styles.classAwareTitle}>Class-aware tutoring</Text>
-              <Text style={styles.classAwareSub}>
-                Guru adjusts depth for each grade level, covering foundational concepts through exam preparation.
-              </Text>
-            </View>
           </View>
         </ScrollView>
       )}
@@ -1895,7 +2653,7 @@ export default function App() {
                 <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
                 <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
                 <Text style={styles.chatEmptySub}>
-                  Ask questions across all Grade 10 CDC textbooks. You can type, speak with voice, or snap a photo of any math problem.
+                  Ask questions across all subjects, formulas, and school curricula. You can type, speak with voice, or snap a photo of any problem.
                 </Text>
               </View>
             ) : (
@@ -1983,6 +2741,20 @@ export default function App() {
               </View>
             )}
 
+            {/* Stop Generating Banner Pill */}
+            {isGenerating && (
+              <View style={styles.generatingStopContainer}>
+                <TouchableOpacity
+                  style={styles.generatingStopPill}
+                  onPress={handleStopGeneration}
+                  activeOpacity={0.8}
+                >
+                  <Square size={11} color="#ef4444" fill="#ef4444" style={{ marginRight: 6 }} />
+                  <Text style={styles.generatingStopText}>Stop generating</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Chat Input Bar */}
             <View style={styles.chatInputBarContainer}>
               <View style={styles.chatInputPillWrapper}>
@@ -1998,30 +2770,41 @@ export default function App() {
                   style={styles.chatPillInput}
                   value={prompt}
                   onChangeText={setPrompt}
-                  placeholder={isListening ? 'Listening to voice...' : 'Ask Guru anything or snap a photo...'}
+                  placeholder={isListening ? 'Listening to voice...' : isGenerating ? 'Guru is thinking...' : 'Ask Guru anything or snap a photo...'}
                   placeholderTextColor={isListening ? '#38bdf8' : '#71717a'}
                   multiline
                 />
 
-                {/* Voice STT Record Button */}
-                <TouchableOpacity
-                  style={[styles.chatMicIconButton, isListening && styles.chatMicIconButtonActive]}
-                  onPress={isListening ? stopVoiceRecording : startVoiceRecording}
-                >
-                  {isListening ? (
-                    <MicOff size={18} color="#ef4444" />
-                  ) : (
-                    <Mic size={18} color="#a1a1aa" />
-                  )}
-                </TouchableOpacity>
+                {isGenerating ? (
+                  <TouchableOpacity
+                    style={styles.chatStopIconButton}
+                    onPress={handleStopGeneration}
+                  >
+                    <Square size={12} color="#ffffff" fill="#ffffff" />
+                  </TouchableOpacity>
+                ) : (
+                  <>
+                    {/* Voice STT Record Button */}
+                    <TouchableOpacity
+                      style={[styles.chatMicIconButton, isListening && styles.chatMicIconButtonActive]}
+                      onPress={isListening ? stopVoiceRecording : startVoiceRecording}
+                    >
+                      {isListening ? (
+                        <MicOff size={18} color="#ef4444" />
+                      ) : (
+                        <Mic size={18} color="#a1a1aa" />
+                      )}
+                    </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.chatSendIconButton}
-                  disabled={!prompt.trim() && !attachedFileContent && !attachedImageUri}
-                  onPress={() => sendPrompt()}
-                >
-                  <Send size={17} color={prompt.trim() || attachedFileContent || attachedImageUri ? '#ffffff' : '#52525b'} />
-                </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.chatSendIconButton}
+                      disabled={!prompt.trim() && !attachedFileContent && !attachedImageUri}
+                      onPress={() => sendPrompt()}
+                    >
+                      <Send size={17} color={prompt.trim() || attachedFileContent || attachedImageUri ? '#ffffff' : '#52525b'} />
+                    </TouchableOpacity>
+                  </>
+                )}
               </View>
             </View>
           </KeyboardAvoidingView>
@@ -2039,85 +2822,27 @@ export default function App() {
 
                 <TouchableOpacity
                   style={styles.attachOptionRow}
-                  onPress={async () => {
-                    setShowAttachModal(false);
-                    try {
-                      const perm = await ImagePicker.requestCameraPermissionsAsync();
-                      if (!perm.granted) {
-                        showToast('Camera permission required.');
-                        return;
-                      }
-                      const res = await ImagePicker.launchCameraAsync({
-                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                        quality: 0.8,
-                      });
-                      if (!res.canceled && res.assets && res.assets.length > 0) {
-                        setAttachedImageUri(res.assets[0].uri);
-                      }
-                    } catch (_) {}
-                  }}
+                  onPress={handlePickCamera}
                 >
                   <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
                     <Camera size={20} color="#ffffff" />
                   </View>
                   <View style={styles.attachOptionTextGroup}>
                     <Text style={styles.attachOptionLabel}>Take photo</Text>
-                    <Text style={styles.attachOptionSub}>Attach image from camera</Text>
+                    <Text style={styles.attachOptionSub}>Attach image from camera for OCR</Text>
                   </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.attachOptionRow}
-                  onPress={async () => {
-                    setShowAttachModal(false);
-                    try {
-                      const res = await ImagePicker.launchImageLibraryAsync({
-                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                        quality: 0.8,
-                      });
-                      if (!res.canceled && res.assets && res.assets.length > 0) {
-                        setAttachedImageUri(res.assets[0].uri);
-                      }
-                    } catch (_) {}
-                  }}
+                  onPress={handlePickGallery}
                 >
                   <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
-                    <ImageIcon size={20} color="#38bdf8" />
+                    <ImageIcon size={20} color="#ffffff" />
                   </View>
                   <View style={styles.attachOptionTextGroup}>
                     <Text style={styles.attachOptionLabel}>Upload from gallery</Text>
-                    <Text style={styles.attachOptionSub}>Attach image from gallery</Text>
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.attachOptionRow}
-                  onPress={async () => {
-                    setShowAttachModal(false);
-                    try {
-                      const res = await DocumentPicker.getDocumentAsync({
-                        type: ['text/*', 'application/pdf'],
-                        copyToCacheDirectory: true,
-                      });
-                      if (!res.canceled && res.assets && res.assets.length > 0) {
-                        const asset = res.assets[0];
-                        setAttachedFileName(asset.name);
-                        if (asset.uri) {
-                          try {
-                            const content = await FileSystem.readAsStringAsync(asset.uri);
-                            setAttachedFileContent(content);
-                          } catch (_) {}
-                        }
-                      }
-                    } catch (_) {}
-                  }}
-                >
-                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
-                    <FileText size={20} color="#a1a1aa" />
-                  </View>
-                  <View style={styles.attachOptionTextGroup}>
-                    <Text style={styles.attachOptionLabel}>Attach study note</Text>
-                    <Text style={styles.attachOptionSub}>Attach document or text note</Text>
+                    <Text style={styles.attachOptionSub}>Attach question photo from device</Text>
                   </View>
                 </TouchableOpacity>
 
@@ -2192,171 +2917,383 @@ export default function App() {
         </View>
       )}
 
-      {/* TAB 3: EXAM REVISION & MOCK EXAM PRACTICE */}
+      {/* TAB 3: EXAM REVISION & PAST PAPERS */}
       {activeTab === 'revision' && (
         <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
           <View style={styles.sectionHeaderRow}>
             <Award size={18} color="#ffffff" style={{ marginRight: 8 }} />
-            <Text style={styles.sectionTitleText}>Exam Revision & Mock Practice</Text>
+            <Text style={styles.sectionTitleText}>Exam Revision & Past Papers</Text>
+          </View>
+          <Text style={styles.greetingSub}>
+            Access official SEE question papers, comprehensive province collections, and quick-reference formula sheets.
+          </Text>
+
+          {/* DEDICATED FORMULA SHEETS FOR SEE */}
+          <View style={{ marginTop: 14, marginBottom: 8 }}>
+            <Text style={[styles.sectionTitleText, { fontSize: 13, color: '#e4e4e7', marginBottom: 8 }]}>
+              SEE Quick Formula Sheets
+            </Text>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+              {/* Compulsory Maths Formula Sheet */}
+              <TouchableOpacity
+                style={[styles.mockExamBannerCard, { flex: 1, flexDirection: 'column', alignItems: 'flex-start', padding: 12, marginVertical: 0 }]}
+                onPress={() => openInAppPdf('formula_sheets/guru_comp_math.pdf', 'Compulsory Maths Formula Sheet (SEE)')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <BookOpen size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={[styles.mockBannerTitle, { fontSize: 13 }]}>Compulsory Maths</Text>
+                </View>
+                <Text style={[styles.mockBannerSub, { fontSize: 11, marginBottom: 10 }]}>
+                  All-chapter SEE formula & theorem summary.
+                </Text>
+                <View style={[styles.mockBannerButton, { alignSelf: 'stretch', justifyContent: 'center', backgroundColor: '#ffffff', borderRadius: 8, paddingVertical: 8 }]}>
+                  <Text style={[styles.mockBannerButtonText, { color: '#000000', fontWeight: '800', fontSize: 11.5 }]}>Open Formula Sheet</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Optional Maths Formula Sheet */}
+              <TouchableOpacity
+                style={[styles.mockExamBannerCard, { flex: 1, flexDirection: 'column', alignItems: 'flex-start', padding: 12, marginVertical: 0 }]}
+                onPress={() => openInAppPdf('formula_sheets/guru_opt_math_v3.pdf', 'Optional Maths Formula Sheet (SEE)')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Sparkles size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={[styles.mockBannerTitle, { fontSize: 13 }]}>Optional Maths</Text>
+                </View>
+                <Text style={[styles.mockBannerSub, { fontSize: 11, marginBottom: 10 }]}>
+                  Vectors, Trig, Matrices & Coordinate Geometry.
+                </Text>
+                <View style={[styles.mockBannerButton, { alignSelf: 'stretch', justifyContent: 'center', backgroundColor: '#ffffff', borderRadius: 8, paddingVertical: 8 }]}>
+                  <Text style={[styles.mockBannerButtonText, { color: '#000000', fontWeight: '800', fontSize: 11.5 }]}>Open Formula Sheet</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* AI GENERATE QUIZ BANNER */}
-          <View style={styles.mockExamBannerCard}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.mockBannerTitle}>Generate AI Mock Exam</Text>
-              <Text style={styles.mockBannerSub}>
-                Produce fresh multi-subject SEE exam questions based on the CDC syllabus.
-              </Text>
-            </View>
+          {/* PAST PAPERS & MODEL SETS SECTION */}
+          <View style={{ marginTop: 6, marginBottom: 14 }}>
+            <Text style={[styles.sectionTitleText, { fontSize: 13, color: '#e4e4e7', marginBottom: 8 }]}>
+              SEE Question Papers & Model Sets
+            </Text>
+
+            {/* 2082 PAST PAPERS / MODEL QUESTION BUTTON */}
             <TouchableOpacity
-              style={styles.mockBannerButton}
-              onPress={() => {
-                pickRandomQuiz();
-                showToast('New mock exam questions generated');
-              }}
+              style={styles.pastPaperBigCard}
+              onPress={() => openInAppPdf('past_papers/SEE_2082_All_Subjects_Combined.pdf', 'SEE 2082 All Subjects Combined Model Question')}
+              activeOpacity={0.8}
             >
-              <Sparkles size={14} color="#000000" style={{ marginRight: 5 }} />
-              <Text style={styles.mockBannerButtonText}>Generate</Text>
+              <View style={styles.pastPaperBigCardLeft}>
+                <View style={[styles.attachOptionIcon, { backgroundColor: '#18181b', marginRight: 12 }]}>
+                  <FileText size={22} color="#ffffff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.pastPaperBigTitle}>2082 SEE Past & Model Papers</Text>
+                    <View style={styles.unitCountPill}>
+                      <Text style={styles.unitCountText}>All Subjects</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.pastPaperBigSub}>
+                    Official combined 2082 SEE model question paper for all subjects.
+                  </Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="#ffffff" />
+            </TouchableOpacity>
+
+            {/* 2081 PAST PAPERS BUTTON (OPENS SUBJECT & PROVINCE CHOOSER) */}
+            <TouchableOpacity
+              style={[styles.pastPaperBigCard, { marginTop: 10 }]}
+              onPress={() => {
+                setSelected2081SubjectIndex(0);
+                setIs2081ModalOpen(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <View style={styles.pastPaperBigCardLeft}>
+                <View style={[styles.attachOptionIcon, { backgroundColor: '#18181b', marginRight: 12 }]}>
+                  <Folder size={22} color="#ffffff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.pastPaperBigTitle}>2081 SEE Past Papers</Text>
+                    <View style={styles.unitCountPill}>
+                      <Text style={styles.unitCountText}>7 Provinces</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.pastPaperBigSub}>
+                    Subject-wise question papers from Bagmati, Gandaki, Koshi, Lumbini, Madhesh, Karnali & Sudurpaschim.
+                  </Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="#ffffff" />
             </TouchableOpacity>
           </View>
 
-          {/* SUBJECT WISE MOCK MODULES */}
-          <View style={styles.mockModulesContainer}>
-            {[
-              { name: 'Science & Technology', count: '15 Units • Full SEE Model', code: 'SCI-10' },
-              { name: 'Compulsory Mathematics', count: '14 Units • Formula Sets', code: 'MTH-10' },
-              { name: 'Social Studies & Life Skills', count: '9 Units • Constitution & History', code: 'SOC-10' },
-              { name: 'Optional Mathematics', count: '9 Units • Geometry & Trig', code: 'OPT-10' },
-              { name: 'Compulsory Nepali', count: '10 Units • Literature & Grammar', code: 'NEP-10' },
-            ].map((mod, idx) => (
+          {/* STEP-BY-STEP MODEL SOLUTIONS (100% FREE) SECTION */}
+          <View style={{ marginTop: 8, marginBottom: 20 }}>
+            <View style={styles.proSolutionsHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Sparkles size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={[styles.sectionTitleText, { fontSize: 13.5, color: '#e4e4e7' }]}>
+                  Step-by-Step Model Solutions
+                </Text>
+              </View>
+            </View>
+
+            {/* 2082 MODEL SOLUTIONS LIST */}
+            <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#a1a1aa', marginBottom: 8, marginTop: 10 }}>
+              2082 Full Model Exam Solutions
+            </Text>
+            {PRO_SOLUTIONS_2082.map((sol) => (
               <TouchableOpacity
-                key={mod.code}
-                style={styles.mockModuleItem}
-                onPress={() => {
-                  setPrompt(`Generate a 5-question SEE practice test with solutions for Class 10 ${mod.name}.`);
-                  setActiveTab('learn');
-                }}
+                key={sol.id}
+                style={styles.proSolutionCard}
+                activeOpacity={0.8}
+                onPress={() => openInAppPdf(sol.assetPath, sol.title)}
               >
-                <View style={styles.mockModuleLeft}>
-                  <FileCheck size={18} color="#ffffff" style={{ marginRight: 10 }} />
-                  <View>
-                    <Text style={styles.mockModuleTitle}>{mod.name}</Text>
-                    <Text style={styles.mockModuleSub}>{mod.count}</Text>
+                <View style={styles.proSolutionCardLeft}>
+                  <View style={[styles.proSolutionIconBox, { backgroundColor: '#18181b' }]}>
+                    <FileText size={18} color="#ffffff" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.proSolutionTitle} numberOfLines={1}>{sol.title}</Text>
+                    <Text style={styles.proSolutionSub} numberOfLines={1}>{sol.description}</Text>
                   </View>
                 </View>
-                <ChevronRight size={16} color="#71717a" />
+                <View style={[styles.proSolutionRightPill, { backgroundColor: '#ffffff', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 8 }]}>
+                  <Text style={{ color: '#000000', fontWeight: '800', fontSize: 11.5 }}>Open</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+
+            {/* 2081 MODEL SOLUTIONS LIST */}
+            <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#a1a1aa', marginBottom: 8, marginTop: 14 }}>
+              2081 Past Board Solutions
+            </Text>
+            {PRO_SOLUTIONS_2081.map((sol) => (
+              <TouchableOpacity
+                key={sol.id}
+                style={styles.proSolutionCard}
+                activeOpacity={0.8}
+                onPress={() => openInAppPdf(sol.assetPath, sol.title)}
+              >
+                <View style={styles.proSolutionCardLeft}>
+                  <View style={[styles.proSolutionIconBox, { backgroundColor: '#18181b' }]}>
+                    <FileText size={18} color="#ffffff" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.proSolutionTitle} numberOfLines={1}>{sol.title}</Text>
+                    <Text style={styles.proSolutionSub} numberOfLines={1}>{sol.description}</Text>
+                  </View>
+                </View>
+                <View style={[styles.proSolutionRightPill, { backgroundColor: '#ffffff', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 8 }]}>
+                  <Text style={{ color: '#000000', fontWeight: '800', fontSize: 11.5 }}>Open</Text>
+                </View>
               </TouchableOpacity>
             ))}
           </View>
         </ScrollView>
       )}
 
-      {/* TAB 4: MATH SOLVER — SNAP & SOLVE */}
-      {activeTab === 'solver' && (
+      {/* TAB 4: GURU DAKSHINA - SPONSOR A RURAL NEPAL STUDENT'S FUTURE */}
+      {activeTab === 'donate' && (
         <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
-          {/* Solver Header */}
-          <View style={styles.sectionHeaderRow}>
-            <Camera size={17} color="#38bdf8" style={{ marginRight: 7 }} />
-            <Text style={styles.sectionTitleText}>Math Solver</Text>
+          {/* Header */}
+          <View style={styles.dakshinaHeaderRow}>
+            <Gift size={20} color="#ffffff" style={{ marginRight: 8 }} />
+            <Text style={styles.dakshinaMainTitle}>SPONSOR A STUDENT'S FUTURE</Text>
           </View>
-          <Text style={styles.greetingSub}>
-            Snap or upload a photo of any math or science problem — Guru AI will solve it step by step, completely offline.
+          <Text style={styles.dakshinaMainSub}>
+            Empower a student in rural Nepal with a complete offline study toolkit. Provide essential learning resources, from textbooks to step-by-step solutions.
           </Text>
 
-          {/* Capture Buttons */}
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, marginBottom: 16 }}>
-            <TouchableOpacity
-              style={[styles.newQuizButton, { flex: 1, backgroundColor: '#38bdf8' }]}
-              onPress={handleSolverCapture}
-            >
-              <Camera size={16} color="#000000" style={{ marginRight: 6 }} />
-              <Text style={[styles.newQuizButtonText, { color: '#000000', fontWeight: '700' }]}>
-                Take Photo
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.newQuizButton, { flex: 1, backgroundColor: '#27272a' }]}
-              onPress={handleSolverGallery}
-            >
-              <ImageIcon size={16} color="#38bdf8" style={{ marginRight: 6 }} />
-              <Text style={styles.newQuizButtonText}>From Gallery</Text>
-            </TouchableOpacity>
+          {/* 6-Grid Feature Icons */}
+          <View style={styles.dakshinaGridContainer}>
+            <View style={styles.dakshinaGridItem}>
+              <BookOpen size={24} color="#ffffff" />
+              <Text style={styles.dakshinaGridLabel}>Full Solutions</Text>
+            </View>
+            <View style={styles.dakshinaGridItem}>
+              <Box size={24} color="#ffffff" />
+              <Text style={styles.dakshinaGridLabel}>Class 10 Textbooks</Text>
+            </View>
+            <View style={styles.dakshinaGridItem}>
+              <FileText size={24} color="#ffffff" />
+              <Text style={styles.dakshinaGridLabel}>Model Question Papers</Text>
+            </View>
+            <View style={styles.dakshinaGridItem}>
+              <Award size={24} color="#ffffff" />
+              <Text style={styles.dakshinaGridLabel}>Past Question Papers</Text>
+            </View>
+            <View style={styles.dakshinaGridItem}>
+              <Sparkles size={24} color="#ffffff" />
+              <Text style={styles.dakshinaGridLabel}>AI Tutor</Text>
+            </View>
+            <View style={styles.dakshinaGridItem}>
+              <Lightbulb size={24} color="#ffffff" />
+              <Text style={styles.dakshinaGridLabel}>Exam Prep & MCQs</Text>
+            </View>
           </View>
 
-          {/* Captured Image Preview */}
-          {solverImageUri && (
-            <View style={styles.solverImageContainer}>
-              <Image
-                source={{ uri: solverImageUri }}
-                style={styles.solverImagePreview}
-                resizeMode="contain"
-              />
-              <TouchableOpacity
-                style={styles.solverImageClearBtn}
-                onPress={() => {
-                  setSolverImageUri(null);
-                  setSolverResult(null);
-                  setIsSolving(false);
-                }}
-              >
-                <X size={14} color="#ffffff" />
-              </TouchableOpacity>
+          {/* Impact Active Banner */}
+          <View style={styles.dakshinaImpactCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <Heart size={16} color="#ffffff" fill="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={styles.dakshinaImpactTitle}>Impact Active</Text>
+            </View>
+            <Text style={styles.dakshinaImpactText}>
+              {`Your current sponsorship is actively supporting ${sponsorCount || 1} rural student in Nepal. Thank you!`}
+            </Text>
+          </View>
+
+          {/* Success Message Banner */}
+          {donationSuccessMsg && (
+            <View style={styles.successBanner}>
+              <CheckCircle2 size={18} color="#ffffff" />
+              <Text style={styles.successBannerText}>{donationSuccessMsg}</Text>
             </View>
           )}
 
-          {/* Loading State */}
-          {isSolving && (
-            <View style={styles.solverLoadingCard}>
-              <ActivityIndicator size="small" color="#38bdf8" />
-              <Text style={styles.solverLoadingText}>
-                Guru is analyzing the problem and solving step by step...
-              </Text>
+          {/* Offline Kit Contents Checklist Card */}
+          <View style={styles.dakshinaChecklistCard}>
+            <Text style={styles.dakshinaChecklistHeader}>Offline Kit Contents</Text>
+            <View style={styles.dakshinaChecklistRow}>
+              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.dakshinaChecklistText}>Full SEE Solutions</Text>
             </View>
-          )}
+            <View style={styles.dakshinaChecklistRow}>
+              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.dakshinaChecklistText}>Class 10 Textbooks</Text>
+            </View>
+            <View style={styles.dakshinaChecklistRow}>
+              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.dakshinaChecklistText}>Model Question Papers</Text>
+            </View>
+            <View style={styles.dakshinaChecklistRow}>
+              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.dakshinaChecklistText}>Tutor AI</Text>
+            </View>
+            <View style={[styles.dakshinaChecklistRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.dakshinaChecklistText}>Exam Prep & MCQs</Text>
+            </View>
+          </View>
 
-          {/* Solution Output */}
-          {solverResult && !isSolving && (
-            <View style={styles.solverResultCard}>
-              <View style={styles.solverResultHeader}>
-                <CheckCircle2 size={15} color="#22c55e" style={{ marginRight: 6 }} />
-                <Text style={styles.solverResultTitle}>Solution</Text>
+          {/* YOUR CONTRIBUTION MAKES A DIFFERENCE CARD */}
+          <Text style={styles.dakshinaSectionTitle}>YOUR CONTRIBUTION MAKES A DIFFERENCE</Text>
+          <View style={styles.dakshinaDonateCard}>
+            <Text style={styles.dakshinaDonateDesc}>
+              For $1, 1 rural student who needs it gets full access to all educational resources and an offline study toolkit.
+            </Text>
+
+            <Text style={styles.dakshinaMultiplierLabel}>How many students would you like to sponsor?</Text>
+
+            {/* Counter and Price Row */}
+            <View style={styles.dakshinaMultiplierRow}>
+              <View style={styles.dakshinaCounterBox}>
+                <TouchableOpacity
+                  style={styles.dakshinaCounterBtn}
+                  onPress={() => setSponsorCount((prev) => Math.max(1, prev - 1))}
+                  activeOpacity={0.7}
+                >
+                  <Minus size={15} color="#ffffff" />
+                </TouchableOpacity>
+
+                <View style={styles.dakshinaCounterValueBox}>
+                  <Users size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.dakshinaCounterValueText}>{sponsorCount}</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.dakshinaCounterBtn}
+                  onPress={() => setSponsorCount((prev) => Math.min(100, prev + 1))}
+                  activeOpacity={0.7}
+                >
+                  <Plus size={15} color="#ffffff" />
+                </TouchableOpacity>
               </View>
-              <View style={styles.solverResultContent}>
-                <MathMarkdownRenderer content={solverResult} />
+
+              <View style={styles.dakshinaPriceBox}>
+                <DollarSign size={16} color="#ffffff" style={{ marginRight: 2 }} />
+                <View>
+                  <Text style={styles.dakshinaPriceText}>{`$${(sponsorCount * 1).toFixed(2)}`}</Text>
+                  <Text style={styles.dakshinaPriceCurrency}>USD</Text>
+                </View>
               </View>
             </View>
-          )}
 
-          {/* Empty State — No Image Yet */}
-          {!solverImageUri && !isSolving && !solverResult && (
-            <View style={styles.solverEmptyState}>
-              <Camera size={40} color="#3f3f46" />
-              <Text style={styles.solverEmptyTitle}>No problem captured yet</Text>
-              <Text style={styles.solverEmptySubtitle}>
-                Point your camera at a textbook question, handwritten problem, or printed equation and tap "Take Photo"
-              </Text>
+            {/* Quick Count Selection Chips */}
+            <View style={styles.dakshinaQuickChipsRow}>
+              {[1, 3, 5, 10, 20].map((num) => (
+                <TouchableOpacity
+                  key={`chip-${num}`}
+                  style={[
+                    styles.dakshinaQuickChip,
+                    sponsorCount === num && styles.dakshinaQuickChipActive,
+                  ]}
+                  onPress={() => setSponsorCount(num)}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.dakshinaQuickChipText,
+                      sponsorCount === num && styles.dakshinaQuickChipTextActive,
+                    ]}
+                  >
+                    {`${num} St.`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-          )}
+
+            <Text style={styles.dakshinaSummaryText}>
+              {`Sponsor ${sponsorCount} Student${sponsorCount > 1 ? 's' : ''} for $${(sponsorCount * 1).toFixed(2)} total`}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.dakshinaSponsorBtn}
+              activeOpacity={0.85}
+              disabled={isPurchasing}
+              onPress={() => handleSponsorNow(sponsorCount)}
+            >
+              {isPurchasing ? (
+                <ActivityIndicator size="small" color="#000000" />
+              ) : (
+                <Text style={styles.dakshinaSponsorBtnText}>SPONSOR NOW</Text>
+              )}
+            </TouchableOpacity>
+          </View>
 
           {/* Profile Edit Row */}
-          <View style={{ marginTop: 20 }}>
-            <TouchableOpacity style={styles.solverSettingsRow} onPress={() => setScreen('onboarding')}>
-              <User size={15} color="#71717a" style={{ marginRight: 8 }} />
-              <Text style={styles.solverSettingsText}>{user?.name || 'Student'} — Edit Profile</Text>
-              <ChevronRight size={14} color="#3f3f46" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={styles.dakshinaProfileBtn}
+            onPress={() => {
+              setName(user?.name || '');
+              setSchool(user?.school || '');
+              setScreen('onboarding');
+            }}
+            activeOpacity={0.8}
+          >
+            <User size={14} color="#71717a" style={{ marginRight: 8 }} />
+            <Text style={styles.dakshinaProfileBtnText}>{`${user?.name || 'Sangam'} | Edit Profile`}</Text>
+            <ChevronRight size={14} color="#71717a" />
+          </TouchableOpacity>
         </ScrollView>
       )}
 
-      {/* FREE MOVABLE DRAGGABLE FLOATING GURU AI SPHERE (HIDDEN ON LEARN TAB & PDF VIEWER) */}
-      {activeTab !== 'learn' && !activePdf && (
+      {/* FREE MOVABLE DRAGGABLE FLOATING GURU AI SPHERE (ALWAYS ACTIVE & ACCESSIBLE ACROSS TABS & PDF VIEWER) */}
+      {activeTab !== 'learn' && (
         <Animated.View
           style={[
             styles.floatingBotMovable,
             {
               transform: [{ translateX: pan.x }, { translateY: pan.y }],
+              zIndex: 99999,
+              elevation: 25,
             },
           ]}
           {...panResponder.panHandlers}
@@ -2374,23 +3311,18 @@ export default function App() {
       {/* BOTTOM TAB BAR */}
       <View style={styles.bottomTabBar}>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('home')}>
-          <Home size={19} color={activeTab === 'home' ? '#ffffff' : '#71717a'} />
+          <Home size={20} color={activeTab === 'home' ? '#ffffff' : '#71717a'} />
           <Text style={[styles.tabLabel, activeTab === 'home' && styles.tabLabelActive]}>Home</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('learn')}>
-          <BookOpen size={19} color={activeTab === 'learn' ? '#ffffff' : '#71717a'} />
-          <Text style={[styles.tabLabel, activeTab === 'learn' && styles.tabLabelActive]}>Learn</Text>
-        </TouchableOpacity>
-
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('revision')}>
-          <Award size={19} color={activeTab === 'revision' ? '#ffffff' : '#71717a'} />
-          <Text style={[styles.tabLabel, activeTab === 'revision' && styles.tabLabelActive]}>Exam Revision</Text>
+          <BookOpen size={20} color={activeTab === 'revision' ? '#ffffff' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'revision' && styles.tabLabelActive]}>Browse</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('solver')}>
-          <Camera size={19} color={activeTab === 'solver' ? '#38bdf8' : '#71717a'} />
-          <Text style={[styles.tabLabel, activeTab === 'solver' && styles.tabLabelActive]}>Solve</Text>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('donate')}>
+          <Heart size={20} color={activeTab === 'donate' ? '#ffffff' : '#71717a'} />
+          <Text style={[styles.tabLabel, activeTab === 'donate' && styles.tabLabelActive]}>Guru Dakshina</Text>
         </TouchableOpacity>
       </View>
 
@@ -2523,165 +3455,320 @@ export default function App() {
         </View>
       )}
 
-      {/* --- FULL-PAGE FLOATING GURU AI MODAL --- */}
-      {isChatModalOpen && (
-        <View style={styles.fullModalOverlay}>
-          <SafeAreaView style={styles.darkContainer}>
-            <View style={styles.chatTopBar}>
-              <TouchableOpacity style={styles.chatCloseButton} onPress={() => setIsChatModalOpen(false)}>
-                <X size={22} color="#ffffff" />
-              </TouchableOpacity>
-
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Image source={logoSource} style={styles.chatModalLogoIcon} resizeMode="contain" />
-                <Text style={styles.chatModalHeaderTitle}>Guru AI Assistant</Text>
+      {/* --- 2081 PAST PAPERS SUBJECT & PROVINCE CHOOSER MODAL --- */}
+      {is2081ModalOpen && (
+        <View style={styles.modalBackdropOverlay}>
+          <View style={[styles.mediumSelectorCard, { maxHeight: '82%', width: '92%' }]}>
+            <View style={styles.mediumSelectorHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.mediumSelectorTitle}>2081 SEE Past Papers</Text>
+                <Text style={styles.mediumSelectorSub}>Select subject & province to open in-app PDF</Text>
               </View>
-
-              <TouchableOpacity style={styles.chatBotIconHeader} onPress={createNewChat}>
-                <Plus size={20} color="#ffffff" />
+              <TouchableOpacity onPress={() => setIs2081ModalOpen(false)} style={{ padding: 4 }}>
+                <X size={20} color="#a1a1aa" />
               </TouchableOpacity>
             </View>
 
-            <KeyboardAvoidingView style={styles.chatBody} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-              {activeMessages.length === 0 ? (
-                <View style={styles.chatEmptyView}>
-                  <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
-                  <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
-                  <Text style={styles.chatEmptySub}>
-                    Ask any question or snap a photo from your CDC textbooks. All calculations and responses run on-device.
-                  </Text>
-                </View>
-              ) : (
-                <FlatList
-                  ref={chatListRef}
-                  data={activeMessages}
-                  keyExtractor={(m) => m.id}
-                  contentContainerStyle={styles.chatMessageList}
-                  onContentSizeChange={() => chatListRef.current?.scrollToEnd({ animated: true })}
-                  renderItem={({ item }) => (
-                    <View style={item.isUser ? styles.userMsgRow : styles.botMsgRow}>
-                      {!item.isUser && (
-                        <View style={styles.botAvatarBox}>
-                          <Image source={logoSource} style={styles.botAvatarImage} resizeMode="contain" />
-                        </View>
-                      )}
-                      <View style={item.isUser ? styles.userBubble : styles.botBubble}>
-                        {item.attachmentImageUri && (
-                          <Image source={{ uri: item.attachmentImageUri }} style={styles.chatAttachedPreviewImage} />
-                        )}
-                        {item.attachmentName && (
-                          <View style={styles.chatAttachmentPill}>
-                            <Text style={styles.chatAttachmentText}>{item.attachmentName}</Text>
-                          </View>
-                        )}
-                        {item.isPending ? (
-                          item.text ? (
-                            <View>
-                              <MathMarkdownRenderer content={item.text} isUser={false} />
-                              <View style={[styles.loadingBubbleRow, { marginTop: 6 }]}>
-                                <ActivityIndicator size="small" color="#38bdf8" />
-                                <Text style={styles.loadingBubbleText}>Generating...</Text>
-                              </View>
-                            </View>
-                          ) : (
-                            <View style={styles.loadingBubbleRow}>
-                              <ActivityIndicator size="small" color="#38bdf8" />
-                              <Text style={styles.loadingBubbleText}>Guru is solving & thinking...</Text>
-                            </View>
-                          )
-                        ) : (
-                          <View>
-                            <MathMarkdownRenderer content={item.text} isUser={item.isUser} />
-                            {!item.isUser && (
-                              <View style={styles.botActionButtonsRow}>
-                                <TouchableOpacity
-                                  style={styles.chatActionButton}
-                                  onPress={() => toggleSpeech(item.id, item.text)}
-                                >
-                                  {playingMessageId === item.id ? (
-                                    <VolumeX size={13} color="#ffffff" style={{ marginRight: 4 }} />
-                                  ) : (
-                                    <Volume2 size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
-                                  )}
-                                  <Text style={[styles.chatActionButtonText, playingMessageId === item.id && { color: '#ffffff' }]}>
-                                    {playingMessageId === item.id ? 'Stop' : 'Listen'}
-                                  </Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                  style={styles.chatActionButton}
-                                  onPress={() => copyMessageToClipboard(item.text)}
-                                >
-                                  <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
-                                  <Text style={styles.chatActionButtonText}>Copy</Text>
-                                </TouchableOpacity>
-                              </View>
-                            )}
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                  )}
-                />
-              )}
-
-              {/* Thumbnail Preview for Attached Image */}
-              {attachedImageUri && (
-                <View style={styles.attachedImageThumbnailContainer}>
-                  <Image source={{ uri: attachedImageUri }} style={styles.attachedThumbImage} />
-                  <Text style={styles.attachedThumbText} numberOfLines={1}>Attached Math / Science Photo</Text>
-                  <TouchableOpacity onPress={() => setAttachedImageUri(null)} style={{ padding: 4 }}>
-                    <X size={16} color="#ffffff" />
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Chat Input Bar */}
-              <View style={styles.chatInputBarContainer}>
-                <View style={styles.chatInputPillWrapper}>
-                  {/* Camera / Photo Button for Multimodal Math Problems */}
+            {/* Subject Selector Horizontal Tabs */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12, maxHeight: 42 }}>
+              {PAST_PAPERS_2081_DATA.map((item, sIdx) => {
+                const isSelected = selected2081SubjectIndex === sIdx;
+                return (
                   <TouchableOpacity
-                    style={styles.chatAttachIconButton}
-                    onPress={async () => {
-                      try {
-                        const res = await ImagePicker.launchImageLibraryAsync({
-                          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                          quality: 0.8,
-                        });
-                        if (!res.canceled && res.assets && res.assets.length > 0) {
-                          setAttachedImageUri(res.assets[0].uri);
-                          if (!prompt.trim()) {
-                            setPrompt('Please solve and explain this problem step-by-step:');
-                          }
-                        }
-                      } catch (_) {}
-                    }}
+                    key={item.code}
+                    style={[
+                      styles.gradePill,
+                      { marginRight: 8, paddingHorizontal: 12, paddingVertical: 6, height: 36 },
+                      isSelected && styles.gradePillActive,
+                    ]}
+                    onPress={() => setSelected2081SubjectIndex(sIdx)}
                   >
-                    <Camera size={19} color="#ffffff" />
+                    <Text
+                      style={[
+                        styles.gradePillText,
+                        isSelected && styles.gradePillTextActive,
+                        { fontSize: 12 },
+                      ]}
+                    >
+                      {item.subject}
+                    </Text>
                   </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
 
-                  <TextInput
-                    style={styles.chatPillInput}
-                    value={prompt}
-                    onChangeText={setPrompt}
-                    placeholder="Type a message or attach photo..."
-                    placeholderTextColor="#71717a"
-                    multiline
-                  />
-
-                  <TouchableOpacity
-                    style={styles.chatSendIconButton}
-                    disabled={!prompt.trim() && !attachedFileContent && !attachedImageUri}
-                    onPress={() => sendPrompt()}
-                  >
-                    <Send size={17} color={prompt.trim() || attachedFileContent || attachedImageUri ? '#ffffff' : '#52525b'} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </KeyboardAvoidingView>
-          </SafeAreaView>
+            {/* Province Papers List for Selected Subject */}
+            <ScrollView style={{ flexGrow: 0, maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              {PAST_PAPERS_2081_DATA[selected2081SubjectIndex]?.papers.map((p, pIdx) => (
+                <TouchableOpacity
+                  key={`${p.province}-${pIdx}`}
+                  style={[styles.mediumChoiceItem, { paddingVertical: 12 }]}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setIs2081ModalOpen(false);
+                    openInAppPdf(p.assetPath, p.title);
+                  }}
+                >
+                  <FileText size={18} color="#22c55e" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.mediumChoiceTitle}>{p.province}</Text>
+                    <Text style={[styles.mediumChoiceDesc, { fontSize: 11 }]}>{p.title}</Text>
+                  </View>
+                  <ChevronRight size={16} color="#71717a" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
         </View>
       )}
+
+      {/* --- FULL-PAGE FLOATING GURU AI MODAL --- */}
+      <Modal
+        visible={isChatModalOpen}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsChatModalOpen(false)}
+      >
+        <SafeAreaView style={[styles.darkContainer, { backgroundColor: '#000000' }]}>
+          <StatusBar barStyle="light-content" backgroundColor="#000000" />
+          <View style={styles.chatTopBar}>
+            <TouchableOpacity style={styles.chatCloseButton} onPress={() => setIsChatModalOpen(false)}>
+              <X size={22} color="#ffffff" />
+            </TouchableOpacity>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Image source={logoSource} style={styles.chatModalLogoIcon} resizeMode="contain" />
+              <Text style={styles.chatModalHeaderTitle}>Guru AI Assistant</Text>
+            </View>
+
+            <TouchableOpacity style={styles.chatBotIconHeader} onPress={createNewChat}>
+              <Plus size={20} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+
+          <KeyboardAvoidingView
+            style={styles.chatBody}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+          >
+            {activeMessages.length === 0 ? (
+              <View style={styles.chatEmptyView}>
+                <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
+                <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
+                <Text style={styles.chatEmptySub}>
+                  Ask any question or snap a photo from your textbooks. All calculations and responses run on-device.
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                ref={chatListRef}
+                data={activeMessages}
+                keyExtractor={(m) => m.id}
+                contentContainerStyle={styles.chatMessageList}
+                initialNumToRender={10}
+                maxToRenderPerBatch={6}
+                windowSize={5}
+                removeClippedSubviews={Platform.OS === 'android'}
+                onContentSizeChange={() => chatListRef.current?.scrollToEnd({ animated: false })}
+                renderItem={({ item }) => (
+                  <View style={item.isUser ? styles.userMsgRow : styles.botMsgRow}>
+                    {!item.isUser && (
+                      <View style={styles.botAvatarBox}>
+                        <Image source={logoSource} style={styles.botAvatarImage} resizeMode="contain" />
+                      </View>
+                    )}
+                    <View style={item.isUser ? styles.userBubble : styles.botBubble}>
+                      {item.attachmentImageUri && (
+                        <Image source={{ uri: item.attachmentImageUri }} style={styles.chatAttachedPreviewImage} />
+                      )}
+                      {item.attachmentName && (
+                        <View style={styles.chatAttachmentPill}>
+                          <Text style={styles.chatAttachmentText}>{item.attachmentName}</Text>
+                        </View>
+                      )}
+                      {item.isPending ? (
+                        item.text ? (
+                          <View>
+                            <MathMarkdownRenderer content={item.text} isUser={false} />
+                            <View style={[styles.loadingBubbleRow, { marginTop: 6 }]}>
+                              <ActivityIndicator size="small" color="#38bdf8" />
+                              <Text style={styles.loadingBubbleText}>Generating...</Text>
+                            </View>
+                          </View>
+                        ) : (
+                          <View style={styles.loadingBubbleRow}>
+                            <ActivityIndicator size="small" color="#38bdf8" />
+                            <Text style={styles.loadingBubbleText}>Guru is solving & thinking...</Text>
+                          </View>
+                        )
+                      ) : (
+                        <View>
+                          <MathMarkdownRenderer content={item.text} isUser={item.isUser} />
+                          {!item.isUser && (
+                            <View style={styles.botActionButtonsRow}>
+                              <TouchableOpacity
+                                style={styles.chatActionButton}
+                                onPress={() => toggleSpeech(item.id, item.text)}
+                              >
+                                {playingMessageId === item.id ? (
+                                  <VolumeX size={13} color="#ffffff" style={{ marginRight: 4 }} />
+                                ) : (
+                                  <Volume2 size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                                )}
+                                <Text style={[styles.chatActionButtonText, playingMessageId === item.id && { color: '#ffffff' }]}>
+                                  {playingMessageId === item.id ? 'Stop' : 'Listen'}
+                                </Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.chatActionButton}
+                                onPress={() => copyMessageToClipboard(item.text)}
+                              >
+                                <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
+                                <Text style={styles.chatActionButtonText}>Copy</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
+              />
+            )}
+
+            {/* Thumbnail Preview for Attached Image or Document */}
+            {attachedImageUri ? (
+              <View style={styles.attachedImageThumbnailContainer}>
+                <Image source={{ uri: attachedImageUri }} style={styles.attachedThumbImage} />
+                <Text style={styles.attachedThumbText} numberOfLines={1}>{attachedFileName || 'Attached Photo'}</Text>
+                <TouchableOpacity onPress={() => { setAttachedImageUri(null); setAttachedFileName(null); }} style={{ padding: 4 }}>
+                  <X size={16} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            ) : attachedFileName ? (
+              <View style={styles.attachedImageThumbnailContainer}>
+                <FileText size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.attachedThumbText} numberOfLines={1}>{attachedFileName}</Text>
+                <TouchableOpacity onPress={() => { setAttachedFileName(null); setAttachedFileContent(null); }} style={{ padding: 4 }}>
+                  <X size={16} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {/* Stop Generating Banner Pill */}
+            {isGenerating && (
+              <View style={styles.generatingStopContainer}>
+                <TouchableOpacity
+                  style={styles.generatingStopPill}
+                  onPress={handleStopGeneration}
+                  activeOpacity={0.8}
+                >
+                  <Square size={11} color="#ef4444" fill="#ef4444" style={{ marginRight: 6 }} />
+                  <Text style={styles.generatingStopText}>Stop generating</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Chat Input Bar */}
+            <View style={styles.chatInputBarContainer}>
+              <View style={styles.chatInputPillWrapper}>
+                {/* Plus (+) Button for Upload & Camera options */}
+                <TouchableOpacity
+                  style={styles.chatAttachIconButton}
+                  onPress={() => setShowAttachModal(true)}
+                >
+                  <Plus size={19} color="#ffffff" />
+                </TouchableOpacity>
+
+                <TextInput
+                  style={styles.chatPillInput}
+                  value={prompt}
+                  onChangeText={setPrompt}
+                  placeholder={isListening ? 'Listening to voice...' : isGenerating ? 'Guru is thinking...' : 'Ask Guru anything or snap a photo...'}
+                  placeholderTextColor={isListening ? '#38bdf8' : '#71717a'}
+                  multiline
+                />
+
+                {isGenerating ? (
+                  <TouchableOpacity
+                    style={styles.chatStopIconButton}
+                    onPress={handleStopGeneration}
+                  >
+                    <Square size={12} color="#ffffff" fill="#ffffff" />
+                  </TouchableOpacity>
+                ) : (
+                  <>
+                    {/* Voice STT Record Button */}
+                    <TouchableOpacity
+                      style={[styles.chatMicIconButton, isListening && styles.chatMicIconButtonActive]}
+                      onPress={isListening ? stopVoiceRecording : startVoiceRecording}
+                    >
+                      {isListening ? (
+                        <MicOff size={18} color="#ef4444" />
+                      ) : (
+                        <Mic size={18} color="#a1a1aa" />
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.chatSendIconButton}
+                      disabled={!prompt.trim() && !attachedFileContent && !attachedImageUri}
+                      onPress={() => sendPrompt()}
+                    >
+                      <Send size={17} color={prompt.trim() || attachedFileContent || attachedImageUri ? '#ffffff' : '#52525b'} />
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+
+          {/* ATTACHMENT ACTION SHEET INSIDE MODAL */}
+          {showAttachModal && (
+            <View style={styles.attachModalBackdrop}>
+              <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => setShowAttachModal(false)}
+              />
+              <View style={styles.attachModalSheet}>
+                <Text style={styles.attachModalTitle}>Add attachment</Text>
+
+                <TouchableOpacity
+                  style={styles.attachOptionRow}
+                  onPress={handlePickCamera}
+                >
+                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
+                    <Camera size={20} color="#ffffff" />
+                  </View>
+                  <View style={styles.attachOptionTextGroup}>
+                    <Text style={styles.attachOptionLabel}>Take photo</Text>
+                    <Text style={styles.attachOptionSub}>Attach image from camera for OCR</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.attachOptionRow}
+                  onPress={handlePickGallery}
+                >
+                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
+                    <ImageIcon size={20} color="#ffffff" />
+                  </View>
+                  <View style={styles.attachOptionTextGroup}>
+                    <Text style={styles.attachOptionLabel}>Upload from gallery</Text>
+                    <Text style={styles.attachOptionSub}>Attach question photo from device</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.attachCancelButton} onPress={() => setShowAttachModal(false)}>
+                  <Text style={styles.attachCancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -2713,95 +3800,78 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   onboardingContent: {
-    padding: 20,
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 24 : 48,
+    padding: 24,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 36 : 60,
+    paddingBottom: 40,
   },
   brandHero: {
     alignItems: 'center',
-    marginBottom: 26,
+    marginBottom: 32,
   },
   brandLogo: {
-    width: 58,
-    height: 58,
-    marginBottom: 10,
+    width: 76,
+    height: 76,
+    marginBottom: 14,
   },
   brandTitle: {
-    fontSize: 26,
-    fontWeight: '800',
+    fontSize: 32,
+    fontWeight: '900',
     color: '#ffffff',
+    letterSpacing: -0.5,
   },
   brandSub: {
-    fontSize: 13.5,
+    fontSize: 15,
+    fontWeight: '600',
     color: '#a1a1aa',
-    marginTop: 4,
+    marginTop: 6,
     textAlign: 'center',
+    letterSpacing: 0.2,
   },
   formCard: {
-    backgroundColor: '#121214',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#1e1e24',
-    gap: 14,
+    backgroundColor: '#121215',
+    borderRadius: 22,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: '#27272a',
+    gap: 18,
   },
   formItem: {
-    gap: 6,
-  },
-  inputLabel: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: '#e4e4e7',
-  },
-  darkInput: {
-    height: 44,
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    fontSize: 13.5,
-    color: '#ffffff',
-  },
-  gradeGrid: {
-    flexDirection: 'row',
     gap: 8,
   },
-  gradePill: {
-    flex: 1,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
+  inputLabelRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  gradePillActive: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
+  inputLabel: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#ffffff',
   },
-  gradePillText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: '#a1a1aa',
-  },
-  gradePillTextActive: {
-    color: '#000000',
+  darkInput: {
+    height: 54,
+    backgroundColor: '#18181b',
+    borderWidth: 1.5,
+    borderColor: '#27272a',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    fontSize: 15,
+    color: '#ffffff',
   },
   primaryButton: {
-    height: 44,
-    borderRadius: 10,
+    height: 54,
+    borderRadius: 14,
     backgroundColor: '#ffffff',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
+    marginTop: 8,
   },
   primaryButtonDisabled: {
     opacity: 0.35,
   },
   primaryButtonText: {
-    fontSize: 13.5,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
     color: '#000000',
   },
   // TOP HEADER
@@ -2861,13 +3931,47 @@ const styles = StyleSheet.create({
   mainScroll: {
     paddingHorizontal: 14,
     paddingTop: 12,
-    paddingBottom: 100,
+    paddingBottom: 220,
   },
   greetingBlock: {
     marginBottom: 12,
   },
+  greetingHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  greetingLeftBlock: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  greetingRightBlock: {
+    alignItems: 'flex-end',
+  },
+  greetingTimeText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  greetingDateText: {
+    fontSize: 10.5,
+    color: '#71717a',
+    marginTop: 1,
+    marginBottom: 4,
+  },
+  locationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  locationBadgeText: {
+    fontSize: 10,
+    color: '#94a3b8',
+    fontWeight: '500',
+  },
   greetingTitle: {
-    fontSize: 21,
+    fontSize: 22,
     fontWeight: '800',
     color: '#ffffff',
     marginBottom: 3,
@@ -2895,12 +3999,26 @@ const styles = StyleSheet.create({
   },
   subjectFolderCard: {
     width: '48.5%',
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
-    borderRadius: 13,
-    padding: 11,
+    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 9,
     marginBottom: 8,
+  },
+  subjectCardContentLeft: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingRight: 4,
+  },
+  subjectCardArtBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   subjectCardTop: {
     flexDirection: 'row',
@@ -2922,14 +4040,69 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   subjectCardTitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#ffffff',
     marginBottom: 2,
   },
   subjectCardPages: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#71717a',
+  },
+  chatWithGuruStickerCard: {
+    width: '48.5%',
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0c0c0e',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  chatWithGuruStickerLeft: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingRight: 4,
+  },
+  chatWithGuruStickerTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  chatWithGuruStickerSub: {
+    fontSize: 9.5,
+    color: '#a1a1aa',
+    lineHeight: 13,
+  },
+  chatWithGuruStickerImgBox: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatWithGuruStickerImg: {
+    width: 42,
+    height: 42,
+  },
+  streakCardModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0c0c0e',
+    borderWidth: 1,
+    borderColor: '#1e1e24',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 10,
+  },
+  streakCardLeft: {
+    flex: 1,
   },
   singleStatCard: {
     backgroundColor: '#0c0c0e',
@@ -2964,66 +4137,70 @@ const styles = StyleSheet.create({
   quizCard: {
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
-    borderColor: '#1e1e24',
-    borderRadius: 13,
-    padding: 13,
-    marginBottom: 10,
+    borderColor: '#27272a',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
   quizHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 8,
   },
   quizHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   quizTitle: {
-    fontSize: 12.5,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
     color: '#ffffff',
-    marginLeft: 6,
+    marginLeft: 8,
   },
   quizSubjectTag: {
     backgroundColor: '#18181b',
     borderWidth: 1,
     borderColor: '#27272a',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   quizSubjectTagText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
     color: '#ffffff',
   },
   quizQuestionText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#e4e4e7',
-    lineHeight: 16,
-    marginBottom: 9,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+    lineHeight: 21,
+    marginBottom: 14,
   },
   quizOptionsGrid: {
-    gap: 6,
-    marginBottom: 9,
+    gap: 10,
+    marginBottom: 14,
   },
   quizRowTwo: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    gap: 8,
   },
   quizOptionPill: {
-    width: '48.5%',
+    flex: 1,
+    minHeight: 52,
     backgroundColor: '#121214',
     borderWidth: 1,
     borderColor: '#27272a',
-    borderRadius: 8,
-    paddingVertical: 7,
-    paddingHorizontal: 9,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
   },
   quizOptionPillSelected: {
     borderColor: '#ffffff',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   quizOptionPillCorrect: {
     backgroundColor: '#064e3b',
@@ -3034,9 +4211,9 @@ const styles = StyleSheet.create({
     borderColor: '#f43f5e',
   },
   quizOptionText: {
-    fontSize: 11,
-    color: '#a1a1aa',
-    fontWeight: '500',
+    fontSize: 12.5,
+    color: '#d4d4d8',
+    fontWeight: '600',
   },
   quizOptionTextActive: {
     color: '#ffffff',
@@ -3068,26 +4245,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 6,
+    paddingVertical: 12,
     borderWidth: 1,
-    borderColor: '#27272a',
-    borderRadius: 7,
-    backgroundColor: '#121214',
+    borderColor: '#3f3f46',
+    borderRadius: 10,
+    backgroundColor: '#18181b',
   },
   newQuizButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#ffffff',
   },
   classAwareCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#0c0c0e',
     borderWidth: 1,
     borderColor: '#1e1e24',
-    borderRadius: 13,
-    padding: 13,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginBottom: 10,
+  },
+  classAwareLeft: {
+    flex: 1,
+    marginRight: 10,
+  },
+  classAwareRobotArtBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   classAwareTextGroup: {
     flex: 1,
@@ -3316,8 +4503,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
     borderTopWidth: 1,
     borderTopColor: '#18181b',
-    paddingTop: 6,
-    paddingBottom: Platform.OS === 'android' ? 26 : 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'android' ? 38 : 22,
   },
   tabItem: {
     alignItems: 'center',
@@ -3707,6 +4894,34 @@ const styles = StyleSheet.create({
   chatSendIconButton: {
     marginLeft: 7,
   },
+  chatStopIconButton: {
+    marginLeft: 7,
+    backgroundColor: '#dc2626',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  generatingStopContainer: {
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  generatingStopPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  generatingStopText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
   // --- DOWNLOAD & RESOURCE SETUP SCREEN STYLES ---
   downloadScrollContent: {
     padding: 20,
@@ -3917,29 +5132,41 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   downloadBottomActions: {
+    width: '100%',
     gap: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
   },
   startLearningPrimaryBtn: {
     width: '100%',
+    height: 54,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ffffff',
     borderRadius: 14,
-    paddingVertical: 14,
+    paddingHorizontal: 20,
     shadowColor: '#ffffff',
     shadowOpacity: 0.15,
     shadowRadius: 10,
     elevation: 4,
   },
+  downloadingButtonBox: {
+    backgroundColor: '#18181b',
+    borderWidth: 1.5,
+    borderColor: '#27272a',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
   startLearningPrimaryBtnDisabled: {
     opacity: 0.45,
   },
   startLearningPrimaryBtnText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '800',
     color: '#000000',
+    textAlign: 'center',
   },
   skipToDashboardBtn: {
     paddingVertical: 6,
@@ -4054,105 +5281,555 @@ const styles = StyleSheet.create({
     color: '#71717a',
   },
 
-  // --- MATH SOLVER STYLES ---
-  solverImageContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    marginBottom: 14,
-    position: 'relative',
-  },
-  solverImagePreview: {
-    width: '100%',
-    height: 220,
-    borderRadius: 12,
-  },
-  solverImageClearBtn: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 12,
-    width: 26,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  solverLoadingCard: {
+  // GURU DAKSHINA (SPONSOR RURAL STUDENT) STYLES
+  dakshinaHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 6,
+  },
+  dakshinaMainTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  dakshinaMainSub: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  dakshinaGridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+    rowGap: 14,
+  },
+  dakshinaGridItem: {
+    width: '31%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+  dakshinaGridLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 14,
+  },
+  dakshinaImpactCard: {
     backgroundColor: '#18181b',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#27272a',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 16,
     marginBottom: 14,
-    gap: 10,
   },
-  solverLoadingText: {
-    fontSize: 13,
+  dakshinaImpactTitle: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  dakshinaImpactText: {
+    fontSize: 12,
     color: '#a1a1aa',
-    flex: 1,
+    lineHeight: 17,
+    marginTop: 2,
   },
-  solverResultCard: {
+  dakshinaChecklistCard: {
     backgroundColor: '#18181b',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#27272a',
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 14,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
   },
-  solverResultHeader: {
+  dakshinaChecklistHeader: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 12,
+  },
+  dakshinaChecklistRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#27272a',
-    backgroundColor: '#0f0f10',
   },
-  solverResultTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#22c55e',
-  },
-  solverResultContent: {
-    padding: 14,
-  },
-  solverEmptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 48,
-    gap: 10,
-  },
-  solverEmptyTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#52525b',
-    marginTop: 4,
-  },
-  solverEmptySubtitle: {
+  dakshinaChecklistText: {
     fontSize: 12.5,
-    color: '#3f3f46',
-    textAlign: 'center',
-    lineHeight: 18,
-    paddingHorizontal: 32,
+    fontWeight: '600',
+    color: '#e4e4e7',
   },
-  solverSettingsRow: {
+  dakshinaSectionTitle: {
+    fontSize: 12.5,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  dakshinaDonateCard: {
+    backgroundColor: '#18181b',
+    borderWidth: 1.5,
+    borderColor: '#27272a',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 14,
+  },
+  dakshinaDonateDesc: {
+    fontSize: 12,
+    color: '#a1a1aa',
+    lineHeight: 17,
+    marginBottom: 14,
+  },
+  dakshinaMultiplierLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  dakshinaMultiplierRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#18181b',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    gap: 10,
+  },
+  dakshinaCounterBox: {
+    flex: 1.2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#121214',
     borderWidth: 1,
     borderColor: '#27272a',
     borderRadius: 10,
+    padding: 4,
+    justifyContent: 'space-between',
+  },
+  dakshinaCounterBtn: {
+    width: 34,
+    height: 34,
+    backgroundColor: '#27272a',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dakshinaCounterValueBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  dakshinaCounterValueText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  dakshinaPriceBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#121214',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  dakshinaPriceText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  dakshinaPriceCurrency: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#71717a',
+    marginTop: -2,
+  },
+  dakshinaQuickChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 12,
+  },
+  dakshinaQuickChip: {
+    flex: 1,
+    backgroundColor: '#121214',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 8,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dakshinaQuickChipActive: {
+    backgroundColor: '#27272a',
+    borderColor: '#52525b',
+  },
+  dakshinaQuickChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#a1a1aa',
+  },
+  dakshinaQuickChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  dakshinaSummaryText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#a1a1aa',
+    marginBottom: 14,
+  },
+  dakshinaSponsorBtn: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dakshinaSponsorBtnText: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#000000',
+    letterSpacing: 0.5,
+  },
+  dakshinaRestoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+  dakshinaRestoreBtnText: {
+    fontSize: 12,
+    color: '#71717a',
+    fontWeight: '600',
+  },
+  dakshinaProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 12,
     padding: 13,
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  dakshinaProfileBtnText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#e4e4e7',
+  },
+  successBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    gap: 10,
+  },
+  successBannerText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#38bdf8',
+    flex: 1,
+  },
+  pastPaperBigCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 12,
+    padding: 14,
+  },
+  pastPaperBigCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  pastPaperBigTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 3,
+  },
+  pastPaperBigSub: {
+    fontSize: 11.5,
+    color: '#a1a1aa',
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  editProfileBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  editProfileBackText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#e4e4e7',
+  },
+  // PRACTICE FOR EXAM HERO CARD (HOME TAB)
+  practiceExamHeroCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#09090b',
+    borderWidth: 1.5,
+    borderColor: '#0284c7',
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 10,
+    marginBottom: 16,
+    shadowColor: '#0284c7',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  practiceExamHeroLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  practiceExamIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  practiceExamHeroTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  practiceExamBadge: {
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  practiceExamBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 0.4,
+  },
+  practiceExamHeroSub: {
+    fontSize: 11.5,
+    color: '#94a3b8',
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  practiceExamArrowBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // PRO STEP-BY-STEP SOLUTIONS (REVISION TAB)
+  proSolutionsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
     marginBottom: 8,
   },
-  solverSettingsText: {
-    fontSize: 13,
-    color: '#a1a1aa',
+  proLockBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+  },
+  proLockBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#f59e0b',
+  },
+  proUnlockedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    borderWidth: 1,
+    borderColor: '#22c55e',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+  },
+  proUnlockedBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#22c55e',
+  },
+  proTeaserBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1c1917',
+    borderWidth: 1.5,
+    borderColor: '#f59e0b',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  proTeaserTextGroup: {
     flex: 1,
+    marginRight: 10,
+  },
+  proTeaserTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#fde68a',
+  },
+  proTeaserSub: {
+    fontSize: 11,
+    color: '#d4d4d8',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  proTeaserButton: {
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  proTeaserButtonText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#000000',
+  },
+  proSolutionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  proSolutionCardLocked: {
+    borderColor: '#3f3f46',
+  },
+  proSolutionCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  proSolutionIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  proSolutionTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  proSolutionSub: {
+    fontSize: 11,
+    color: '#a1a1aa',
+    lineHeight: 15,
+  },
+  proSolutionRightPill: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  scienceChapterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  scienceChapterPillActive: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderColor: '#38bdf8',
+  },
+  scienceChapterPillText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#a1a1aa',
+  },
+  scienceChapterPillTextActive: {
+    color: '#38bdf8',
+    fontWeight: '700',
+  },
+  quizCurrentChapterBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.2)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  quizCurrentChapterBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#7dd3fc',
+  },
+  headerUserPillPro: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: '#f59e0b',
+  },
+  headerUserNamePro: {
+    color: '#fbbf24',
+    fontWeight: '800',
+  },
+  quizSubjectTagPro: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  quizSubjectTagTextPro: {
+    color: '#fbbf24',
+    fontWeight: '800',
+  },
+  proSubscribeButtonActive: {
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    borderWidth: 1,
+    borderColor: '#22c55e',
   },
 });

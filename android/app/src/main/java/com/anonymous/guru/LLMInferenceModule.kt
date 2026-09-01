@@ -1,4 +1,4 @@
-package com.anonymous.pathsala
+package com.anonymous.guru
 
 import android.net.Uri
 import android.util.Log
@@ -18,7 +18,9 @@ import com.google.ai.edge.litertlm.ResponseCallback
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.Session
 import com.google.ai.edge.litertlm.SessionConfig
+import android.content.Context
 import android.content.Intent
+import java.io.InputStream
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
@@ -102,8 +104,8 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
 
     /**
      * Dynamically calculates max token context budget based on device RAM.
-     * Rural budget devices in Nepal (e.g. 4GB RAM Oppo A18) get a 1024 token limit to prevent Out-Of-Memory (OOM) crashes,
-     * while higher-end devices (8GB+ RAM) get up to 2048 tokens.
+     * Rural budget devices in Nepal get a safe 2048 token limit to prevent Out-Of-Memory (OOM) crashes,
+     * while higher-end devices (8GB+ RAM) get up to 4096 tokens for rich step-by-step reasoning.
      */
     private fun getMaxModelTokens(): Int {
         val activityManager = reactApplicationContext.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
@@ -111,9 +113,10 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         activityManager?.getMemoryInfo(memInfo)
         val totalRamGb = memInfo.totalMem / (1024L * 1024L * 1024L)
         return when {
-            totalRamGb >= 8 -> 2048
-            totalRamGb >= 6 -> 1536
-            else -> 1024 // Safe budget for 3GB/4GB Android devices
+            totalRamGb >= 8 -> 4096
+            totalRamGb >= 6 -> 3072
+            totalRamGb >= 4 -> 2048
+            else -> 1536
         }
     }
 
@@ -198,7 +201,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit(eventName, payload)
-    }
+        }
 
     private fun createSamplerConfig(language: String, isMathRequest: Boolean): SamplerConfig {
         return when {
@@ -249,7 +252,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         if (imagePathOrUri.isBlank()) return ""
         try {
             val context = reactApplicationContext
-            val bitmap: Bitmap? = when {
+            val rawBitmap: Bitmap? = when {
                 imagePathOrUri.startsWith("content://") || imagePathOrUri.startsWith("file://") -> {
                     val uri = Uri.parse(imagePathOrUri)
                     context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -269,9 +272,20 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 }
             }
 
-            if (bitmap == null) {
+            if (rawBitmap == null) {
                 Log.w(tag, "Could not decode bitmap from: $imagePathOrUri")
                 return ""
+            }
+
+            // Downscale huge camera photos (e.g. 50MP/12MP) to 1920 max dimension for ultra-fast and crisp OCR without OOM
+            val maxDim = 1920
+            val bitmap = if (rawBitmap.width > maxDim || rawBitmap.height > maxDim) {
+                val scale = minOf(maxDim.toFloat() / rawBitmap.width, maxDim.toFloat() / rawBitmap.height)
+                val newW = (rawBitmap.width * scale).toInt()
+                val newH = (rawBitmap.height * scale).toInt()
+                Bitmap.createScaledBitmap(rawBitmap, newW, newH, true)
+            } else {
+                rawBitmap
             }
 
             val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -296,12 +310,12 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
     private fun buildEffectivePrompt(prompt: String, language: String, isMathRequest: Boolean, history: ReadableArray): String {
         val sb = StringBuilder()
 
-        val systemPrompt = "You are Guru, an expert, kind, and brilliant AI teacher and tutor created by Sangam Gautam for students in Nepal preparing for Class 8 BLE, Class 9, and Class 10 SEE exams. You teach Compulsory Mathematics, Science & Technology, Social Studies, English, Optional Math, and Nepali with crystal-clear step-by-step solutions. Always answer the question directly, clearly, and concisely. Never say 'Namaste' or repeat greetings at the beginning of your answers. Never mention you are a generic language model. Use structured markdown headings like '### Phase 1:' or '### Step 1:' with clean line breaks."
+        val systemPrompt = "You are Guru, an inspiring, kind, and brilliant AI teacher created by Sangam Gautam for students in Nepal preparing for Class 8 (BLE), Class 9, and Class 10 (SEE). You teach Compulsory Mathematics, Science & Technology, Social Studies, English, Optional Math, and Nepali. If the student asks in Nepali or Romanized Nepali (e.g. 'sikau na', 'k ho', 'bujhena'), teach warmly and clearly in fluent Nepali (नेपाली) with relatable examples. If the student asks in English, teach in English. Teach naturally and encouragingly: explain concepts simply, show clear step-by-step problem calculations, and provide examples. Do NOT use robotic headings like 'Phase 1' or 'Phase 2'. Do NOT repeat greetings like 'Namaste'. Answer directly with clarity, pedagogical depth, and warmth."
 
         sb.append("<start_of_turn>user\n").append(systemPrompt).append("<end_of_turn>\n")
-        sb.append("<start_of_turn>model\n").append("Understood. I am Guru, your AI tutor for Class 8 BLE, Class 9, and Class 10 SEE. I will provide direct, structured, step-by-step solutions and explanations without repetitive greetings.").append("<end_of_turn>\n")
+        sb.append("<start_of_turn>model\n").append("Understood. I am Guru, your dedicated AI teacher for Class 8 BLE, Class 9, and Class 10 SEE. I will teach naturally, respond fluently in Nepali or English as requested, and provide clear step-by-step guidance without robotic phase headers.").append("<end_of_turn>\n")
 
-        val startIndex = maxOf(0, history.size() - 4) // Retain last 4 messages
+        val startIndex = maxOf(0, history.size() - 2) // Retain last 2 messages to protect KV cache budget
 
         for (index in startIndex until history.size()) {
             val item = history.getMap(index) ?: continue
@@ -309,8 +323,8 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             if (text.isBlank() || text == "Analyzing...") continue
 
             // Cap individual history turn size to protect token budget on mobile
-            if (text.length > 350) {
-                text = text.take(350) + "..."
+            if (text.length > 250) {
+                text = text.take(250) + "..."
             }
 
             val isUser = item.getBoolean("isUser")
@@ -321,7 +335,8 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             }
         }
 
-        sb.append("<start_of_turn>user\n").append(prompt.trim()).append("<end_of_turn>\n")
+        val safePrompt = if (prompt.length > 800) prompt.take(800) + "..." else prompt
+        sb.append("<start_of_turn>user\n").append(safePrompt.trim()).append("<end_of_turn>\n")
         sb.append("<start_of_turn>model\n")
         return sb.toString()
     }
@@ -514,6 +529,12 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             File(targetDir, "gemma-2b-it-cpu-int4.litertlm"),
             File("/storage/emulated/0/Download/gemma-4-E2B-it.litertlm"),
             File("/storage/emulated/0/Download/gemma-2b-it-cpu-int4.litertlm"),
+            File("/sdcard/Download/gemma-4-E2B-it.litertlm"),
+            File("/sdcard/Download/gemma-2b-it-cpu-int4.litertlm"),
+            File("/sdcard/Android/data/com.anonymous.guru/files/Download/gemma-4-E2B-it.litertlm"),
+            File("/sdcard/Android/data/com.anonymous.pathsala/files/Download/gemma-4-E2B-it.litertlm"),
+            File("/sdcard/Android/obb/com.anonymous.guru/gemma-4-E2B-it.litertlm"),
+            File("/sdcard/Android/obb/com.anonymous.pathsala/gemma-4-E2B-it.litertlm"),
             File(context.filesDir, "gemma-4-E2B-it.litertlm")
         )
         return candidateFiles.firstOrNull { it.exists() && it.length() > 500L * 1024L * 1024L }
@@ -842,8 +863,14 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                     }
 
                     override fun onError(throwable: Throwable) {
-                        if (loopGuardTriggered.get()) {
-                            finishSuccess(synchronized(responseBuilder) { responseBuilder.toString() })
+                        val currentText = synchronized(responseBuilder) { responseBuilder.toString().trim() }
+                        val errMsg = throwable.message.orEmpty()
+                        if (loopGuardTriggered.get() || (currentText.isNotBlank() && (errMsg.contains("kv-cache", ignoreCase = true) || errMsg.contains("Status Code: 13") || errMsg.contains("OUT_OF_RANGE")))) {
+                            finishSuccess(currentText)
+                            return
+                        }
+                        if (currentText.isNotBlank()) {
+                            finishSuccess(currentText)
                             return
                         }
                         finishError(throwable)
@@ -913,7 +940,12 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         worker.execute {
             try {
                 val context = reactApplicationContext
-                val fullAssetPath = if (assetRelativePath.startsWith("grade10/")) assetRelativePath else "grade10/$assetRelativePath"
+                val fullAssetPath = when {
+                    assetRelativePath.startsWith("grade10/") ||
+                    assetRelativePath.startsWith("past_papers/") ||
+                    assetRelativePath.startsWith("formula_sheets/") -> assetRelativePath
+                    else -> "grade10/$assetRelativePath"
+                }
                 val inputStream = context.assets.open(fullAssetPath)
                 val cleanName = fullAssetPath.substringAfterLast("/").replace(" ", "_")
                 val outFile = File(context.cacheDir, cleanName)
@@ -960,6 +992,23 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("CLIPBOARD_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun stopGeneration(promise: Promise) {
+        try {
+            val reqId = activeRequestId
+            Log.d(tag, "stopGeneration invoked for active request: $reqId")
+            activeSession?.cancelProcess()
+            isNativeGenerating.set(false)
+            if (reqId != null) {
+                emitGenerationEvent(doneEvent, reqId, text = "[Generation stopped by user]")
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.w(tag, "Error stopping generation: ${e.message}", e)
+            promise.resolve(false)
         }
     }
 
@@ -1063,7 +1112,13 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         error: String? = null
     ) {
         val speedMb = speedBps / (1024.0 * 1024.0)
-        val speedFormatted = "%.1f MB/s".format(speedMb)
+        val speedFormatted = if (speedMb >= 0.05) {
+            "%.1f MB/s".format(speedMb)
+        } else if (status == "downloading") {
+            "Optimizing..."
+        } else {
+            "--"
+        }
         val etaFormatted = if (speedMb > 0.05 && totalBytesAll > bytesReadTotal) {
             val remainingBytes = totalBytesAll - bytesReadTotal
             val secondsLeft = (remainingBytes / speedBps).toInt()
@@ -1136,6 +1191,12 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 File(targetDir, "gemma-2b-it-cpu-int4.litertlm"),
                 File("/storage/emulated/0/Download/gemma-4-E2B-it.litertlm"),
                 File("/storage/emulated/0/Download/gemma-2b-it-cpu-int4.litertlm"),
+                File("/sdcard/Download/gemma-4-E2B-it.litertlm"),
+                File("/sdcard/Download/gemma-2b-it-cpu-int4.litertlm"),
+                File("/sdcard/Android/data/com.anonymous.guru/files/Download/gemma-4-E2B-it.litertlm"),
+                File("/sdcard/Android/data/com.anonymous.pathsala/files/Download/gemma-4-E2B-it.litertlm"),
+                File("/sdcard/Android/obb/com.anonymous.guru/gemma-4-E2B-it.litertlm"),
+                File("/sdcard/Android/obb/com.anonymous.pathsala/gemma-4-E2B-it.litertlm"),
                 File(context.filesDir, "gemma-4-E2B-it.litertlm")
             )
             val gemmaFile = gemmaFiles.firstOrNull { it.exists() && it.length() > 50L * 1024L * 1024L }
@@ -1241,10 +1302,8 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                         targetFile.delete()
                     }
 
-                    val tempFile = File(targetDir, "${spec.fileName}.tmp")
-                    if (tempFile.exists()) {
-                        tempFile.delete()
-                    }
+                    // Resume support: keep .part file across attempts & cancels
+                    val partFile = File(targetDir, "${spec.fileName}.part")
 
                     Log.d(tag, "High-Speed Downloading ${spec.displayName} (${spec.key})")
 
@@ -1257,105 +1316,171 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
 
                     var downloadSuccess = false
                     var lastException: Exception? = null
+                    val maxRetries = 50  // Up to 50 retries for very slow/flaky connections
 
-                    for (candidateUrl in candidateUrls) {
+                    for (attempt in 1..maxRetries) {
                         if (downloadSuccess) break
-                        var currentUrl = candidateUrl
-                        var connection: HttpURLConnection? = null
-                        var redirects = 0
+                        if (isDownloadCancelled.get()) {
+                            // Keep .part file so user can resume later
+                            emitMultiDownloadEvent(index + 1, models.size, spec.displayName, 0, 0, cumulativeBytesRead, totalAllBytesEstimated, 0.0, 0, "cancelled", completedKeys)
+                            promise.reject("CANCELLED", "Download cancelled by user")
+                            return@execute
+                        }
 
-                        try {
-                            while (redirects < 8) {
-                                val urlObj = URL(currentUrl)
-                                connection = (urlObj.openConnection() as HttpURLConnection).apply {
-                                    connectTimeout = 25000
-                                    readTimeout = 35000
-                                    instanceFollowRedirects = true
-                                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/128.0.0.0 Mobile Safari/537.36")
-                                    setRequestProperty("Accept-Encoding", "identity")
-                                    setRequestProperty("Connection", "Keep-Alive")
-                                    if (!hfToken.isNullOrBlank() && (currentUrl.contains("huggingface.co") || currentUrl.contains("hf.co"))) {
-                                        setRequestProperty("Authorization", "Bearer ${hfToken.trim()}")
+                        for (candidateUrl in candidateUrls) {
+                            if (downloadSuccess || isDownloadCancelled.get()) break
+                            var currentUrl = candidateUrl
+                            var connection: HttpURLConnection? = null
+                            var redirects = 0
+
+                            try {
+                                // How many bytes we already have from a previous partial download
+                                val existingBytes = if (partFile.exists()) partFile.length() else 0L
+
+                                while (redirects < 8) {
+                                    val urlObj = URL(currentUrl)
+                                    connection = (urlObj.openConnection() as HttpURLConnection).apply {
+                                        connectTimeout = 60000   // 60s connect timeout for slow internet
+                                        readTimeout = 120000     // 120s read timeout for slow internet
+                                        instanceFollowRedirects = true
+                                        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/128.0.0.0 Mobile Safari/537.36")
+                                        setRequestProperty("Accept-Encoding", "identity")
+                                        setRequestProperty("Connection", "Keep-Alive")
+                                        // Resume from where we left off
+                                        if (existingBytes > 0) {
+                                            setRequestProperty("Range", "bytes=${existingBytes}-")
+                                        }
+                                        if (!hfToken.isNullOrBlank() && (currentUrl.contains("huggingface.co") || currentUrl.contains("hf.co"))) {
+                                            setRequestProperty("Authorization", "Bearer ${hfToken.trim()}")
+                                        }
+                                    }
+                                    val code = connection.responseCode
+                                    if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
+                                        val newLoc = connection.getHeaderField("Location")
+                                        connection.disconnect()
+                                        if (newLoc != null) {
+                                            currentUrl = newLoc
+                                            redirects++
+                                            continue
+                                        }
+                                    }
+                                    break
+                                }
+
+                                val responseCode = connection?.responseCode ?: -1
+
+                                if (responseCode == 401) {
+                                    connection?.disconnect()
+                                    throw Exception("401 Unauthorized: Invalid token or repo access")
+                                }
+
+                                // 206 = partial content (resume worked), 200 = full content (server doesn't support resume)
+                                val isResumed = responseCode == 206
+                                if (responseCode !in listOf(200, 206)) {
+                                    connection?.disconnect()
+                                    throw Exception("HTTP $responseCode from $currentUrl")
+                                }
+
+                                val contentLength = connection!!.contentLengthLong.takeIf { it > 0 } ?: (spec.estimatedMb * 1024L * 1024L)
+                                val fileTotalLength = if (isResumed) existingBytes + contentLength else contentLength
+
+                                // If server returned 200 (ignoring Range), start fresh
+                                val appendMode = isResumed
+
+                                val inputStream = BufferedInputStream(connection.inputStream, 512 * 1024)
+                                val outputStream = BufferedOutputStream(FileOutputStream(partFile, appendMode), 512 * 1024)
+
+                                // 512 KB High-Throughput Stream Buffer for Faster Downloads
+                                val buffer = ByteArray(512 * 1024)
+                                var lastProgressTime = System.currentTimeMillis()
+                                var bytesSinceLastProgress: Long = 0
+                                var smoothedSpeedBps = 0.0
+
+                                // Track cumulative correctly for resume:
+                                // baseCumulative = bytes from previously completed models only
+                                // On resume, currentFileRead starts at existingBytes so cumulative = base + currentFileRead
+                                val baseCumulativeForThisModel = completedKeys.sumOf { key ->
+                                    val completedFile = File(targetDir, models.first { it.key == key }.fileName)
+                                    if (completedFile.exists()) completedFile.length() else 0L
+                                }
+                                var currentFileRead = if (appendMode) existingBytes else 0L
+                                // Reset cumulative to base + what we already have for this file
+                                cumulativeBytesRead = baseCumulativeForThisModel + currentFileRead
+
+                                var bytesRead: Int
+                                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                    if (isDownloadCancelled.get()) {
+                                        outputStream.flush()
+                                        outputStream.close()
+                                        inputStream.close()
+                                        connection.disconnect()
+                                        // Keep .part file for resume!
+                                        emitMultiDownloadEvent(index + 1, models.size, spec.displayName, 0, 0, cumulativeBytesRead, totalAllBytesEstimated, 0.0, 0, "cancelled", completedKeys)
+                                        promise.reject("CANCELLED", "Download cancelled by user")
+                                        return@execute
+                                    }
+
+                                    outputStream.write(buffer, 0, bytesRead)
+                                    currentFileRead += bytesRead
+                                    cumulativeBytesRead += bytesRead
+                                    bytesSinceLastProgress += bytesRead
+
+                                    val now = System.currentTimeMillis()
+                                    val elapsed = now - lastProgressTime
+                                    if (elapsed >= 350) {
+                                        val instantSpeed = (bytesSinceLastProgress.toDouble() / (elapsed / 1000.0))
+                                        smoothedSpeedBps = if (smoothedSpeedBps <= 0.0) instantSpeed else (smoothedSpeedBps * 0.65 + instantSpeed * 0.35)
+                                        val pct = ((cumulativeBytesRead * 100) / totalAllBytesEstimated).toInt().coerceIn(0, 99)
+                                        emitMultiDownloadEvent(index + 1, models.size, spec.displayName, currentFileRead, fileTotalLength, cumulativeBytesRead, totalAllBytesEstimated, smoothedSpeedBps, pct, "downloading", completedKeys)
+                                        lastProgressTime = now
+                                        bytesSinceLastProgress = 0
                                     }
                                 }
-                                val code = connection.responseCode
-                                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
-                                    val newLoc = connection.getHeaderField("Location")
-                                    connection.disconnect()
-                                    if (newLoc != null) {
-                                        currentUrl = newLoc
-                                        redirects++
-                                        continue
-                                    }
-                                }
-                                break
-                            }
 
-                            if (connection == null || connection.responseCode !in 200..299) {
-                                val errCode = connection?.responseCode ?: -1
+                                outputStream.flush()
+                                outputStream.close()
+                                inputStream.close()
+                                connection.disconnect()
+
+                                if (partFile.exists() && partFile.length() > 100000L) {
+                                    if (targetFile.exists()) {
+                                        targetFile.delete()
+                                    }
+                                    partFile.renameTo(targetFile)
+                                    completedKeys.add(spec.key)
+                                    downloadSuccess = true
+                                    Log.d(tag, "Successfully verified & saved ${spec.displayName} (${targetFile.length() / (1024L * 1024L)} MB)")
+                                } else {
+                                    throw Exception("Downloaded file is incomplete (${partFile.length()} bytes)")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(tag, "Attempt $attempt error on $currentUrl: ${e.message}")
+                                lastException = e
                                 connection?.disconnect()
-                                throw Exception(if (errCode == 401) "401 Unauthorized: Invalid token or repo access" else "HTTP $errCode from $currentUrl")
-                            }
-
-                            val fileTotalLength = connection.contentLengthLong.takeIf { it > 0 } ?: (spec.estimatedMb * 1024L * 1024L)
-                            val inputStream = BufferedInputStream(connection.inputStream, 256 * 1024)
-                            val outputStream = BufferedOutputStream(FileOutputStream(tempFile), 256 * 1024)
-
-                            // 256 KB High-Throughput Buffer
-                            val buffer = ByteArray(256 * 1024)
-                            var currentFileRead: Long = 0
-                            var lastProgressTime = System.currentTimeMillis()
-                            var bytesSinceLastProgress: Long = 0
-                            var speedBps = 0.0
-
-                            var bytesRead: Int
-                            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                                if (isDownloadCancelled.get()) {
-                                    outputStream.close()
-                                    inputStream.close()
-                                    connection.disconnect()
-                                    tempFile.delete()
-                                    emitMultiDownloadEvent(index + 1, models.size, spec.displayName, 0, 0, cumulativeBytesRead, totalAllBytesEstimated, 0.0, 0, "cancelled", completedKeys)
-                                    promise.reject("CANCELLED", "Download cancelled by user")
-                                    return@execute
+                                // Don't delete .part file — keep it for resume on next retry
+                                // Include partial bytes from .part file so cumulative never drops to 0 during reconnect!
+                                val partialBytes = if (partFile.exists()) partFile.length() else 0L
+                                val completedBytes = completedKeys.sumOf { key ->
+                                    val completedFile = File(targetDir, models.first { it.key == key }.fileName)
+                                    if (completedFile.exists()) completedFile.length() else 0L
                                 }
+                                cumulativeBytesRead = completedBytes + partialBytes
 
-                                outputStream.write(buffer, 0, bytesRead)
-                                currentFileRead += bytesRead
-                                cumulativeBytesRead += bytesRead
-                                bytesSinceLastProgress += bytesRead
-
-                                val now = System.currentTimeMillis()
-                                val elapsed = now - lastProgressTime
-                                if (elapsed >= 450) {
-                                    speedBps = (bytesSinceLastProgress.toDouble() / (elapsed / 1000.0))
-                                    val pct = ((cumulativeBytesRead * 100) / totalAllBytesEstimated).toInt().coerceIn(0, 99)
-                                    emitMultiDownloadEvent(index + 1, models.size, spec.displayName, currentFileRead, fileTotalLength, cumulativeBytesRead, totalAllBytesEstimated, speedBps, pct, "downloading", completedKeys)
-                                    lastProgressTime = now
-                                    bytesSinceLastProgress = 0
+                                // For auth errors, don't retry
+                                if (e.message?.contains("401") == true) {
+                                    throw e
                                 }
                             }
+                        }
 
-                            outputStream.flush()
-                            outputStream.close()
-                            inputStream.close()
-                            connection.disconnect()
-
-                            if (tempFile.exists() && tempFile.length() > 100000L) {
-                                if (targetFile.exists()) {
-                                    targetFile.delete()
-                                }
-                                tempFile.renameTo(targetFile)
-                                completedKeys.add(spec.key)
-                                downloadSuccess = true
-                                Log.d(tag, "Successfully verified & saved ${spec.displayName} (${targetFile.length() / (1024L * 1024L)} MB)")
-                            } else {
-                                throw Exception("Downloaded file is incomplete (${tempFile.length()} bytes)")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(tag, "Error on candidate $currentUrl: ${e.message}")
-                            lastException = e
-                            if (tempFile.exists()) tempFile.delete()
+                        // If not successful, wait before retrying (exponential backoff, max 15s)
+                        if (!downloadSuccess && !isDownloadCancelled.get() && attempt < maxRetries) {
+                            val waitMs = minOf(attempt * 1500L, 10000L)
+                            Log.d(tag, "Retrying ${spec.displayName} in ${waitMs}ms (attempt $attempt/$maxRetries)...")
+                            val retryPct = ((cumulativeBytesRead * 100) / totalAllBytesEstimated).toInt().coerceIn(0, 99)
+                            emitMultiDownloadEvent(index + 1, models.size, spec.displayName, 0, 0, cumulativeBytesRead, totalAllBytesEstimated, 0.0,
+                                retryPct, "downloading", completedKeys, "Reconnecting... (attempt $attempt)")
+                            Thread.sleep(waitMs)
                         }
                     }
 
@@ -1372,7 +1497,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 promise.resolve(res)
             } catch (e: Exception) {
                 Log.e(tag, "Multi-model download error: ${e.message}", e)
-                emitMultiDownloadEvent(1, 3, "Error", 0, 0, 0, 0, 0.0, 0, "error", emptyList(), e.message)
+                emitMultiDownloadEvent(1, 2, "Error", 0, 0, 0, 0, 0.0, 0, "error", emptyList(), e.message)
                 promise.reject("DOWNLOAD_ERROR", e.message, e)
             }
         }
@@ -1402,7 +1527,11 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         val possibleFiles = listOf(
             File(targetDir, "kokoro-v0_19.onnx"),
             File("/storage/emulated/0/Download/kokoro-v0_19.onnx"),
+            File("/sdcard/Download/kokoro-v0_19.onnx"),
+            File("/sdcard/Android/data/com.anonymous.guru/files/Download/kokoro-v0_19.onnx"),
             File("/sdcard/Android/data/com.anonymous.pathsala/files/Download/kokoro-v0_19.onnx"),
+            File("/sdcard/Android/obb/com.anonymous.guru/kokoro-v0_19.onnx"),
+            File("/sdcard/Android/obb/com.anonymous.pathsala/kokoro-v0_19.onnx"),
             File(context.filesDir, "kokoro-v0_19.onnx")
         )
         return possibleFiles.firstOrNull { it.exists() && it.length() > 10L * 1024L * 1024L }
@@ -1639,13 +1768,31 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         promise.resolve(playing)
     }
 
+    private fun openAssetStreamSafely(context: Context, rawPath: String): Pair<InputStream, String> {
+        val normalized = rawPath.removePrefix("/").trim()
+        val candidates = listOf(
+            normalized,
+            if (normalized.startsWith("grade10/")) normalized else "grade10/$normalized",
+            if (normalized.startsWith("pro_solutions/")) normalized else "pro_solutions/$normalized",
+            if (normalized.startsWith("past_papers/")) normalized else "past_papers/$normalized",
+            if (normalized.startsWith("formula_sheets/")) normalized else "formula_sheets/$normalized"
+        ).distinct()
+
+        for (cand in candidates) {
+            try {
+                val isStream = context.assets.open(cand)
+                return Pair(isStream, cand)
+            } catch (_: Exception) {}
+        }
+        return Pair(context.assets.open(normalized), normalized)
+    }
+
     @ReactMethod
     fun getPdfPageCount(assetRelativePath: String, promise: Promise) {
         worker.execute {
             try {
                 val context = reactApplicationContext
-                val fullAssetPath = if (assetRelativePath.startsWith("grade10/")) assetRelativePath else "grade10/$assetRelativePath"
-                val inputStream = context.assets.open(fullAssetPath)
+                val (inputStream, fullAssetPath) = openAssetStreamSafely(context, assetRelativePath)
                 val cleanName = fullAssetPath.substringAfterLast("/").replace(" ", "_")
                 val outFile = File(context.cacheDir, cleanName)
 
@@ -1674,8 +1821,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         worker.execute {
             try {
                 val context = reactApplicationContext
-                val fullAssetPath = if (assetRelativePath.startsWith("grade10/")) assetRelativePath else "grade10/$assetRelativePath"
-                val inputStream = context.assets.open(fullAssetPath)
+                val (inputStream, fullAssetPath) = openAssetStreamSafely(context, assetRelativePath)
                 val cleanName = fullAssetPath.substringAfterLast("/").replace(" ", "_")
                 val outFile = File(context.cacheDir, cleanName)
 
