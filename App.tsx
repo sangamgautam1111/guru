@@ -195,7 +195,7 @@ const STORAGE_KEYS = {
 const logoSource = require('./assets/logo.png');
 const stickerSource = require('./assets/sticker.png');
 
-// --- 10/10 CHATGPT-STYLE MARKDOWN, MATH & WORD SEPARATION PARSER ---
+// Format Gemma 4 response: clean tokens, normalize LaTeX math, and structure sections
 const formatGemmaResponse = (text: string): string => {
   if (!text) return '';
 
