@@ -828,7 +828,10 @@ export default function App() {
 
   // Floating Guru AI Bot State (Draggable & Expandable Overlay)
   const [isChatModalOpen, setIsChatModalOpen] = useState(false);
-  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 180 })).current;
+  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 200 })).current;
+
+  // Real Dynamic Streak State
+  const [streakCount, setStreakCount] = useState<number>(1);
 
   // Dynamic Science Exam MCQ Generator State (19 Chapters) & Daily Quota
   const [dailyMcqCount, setDailyMcqCount] = useState<number>(0);
@@ -864,6 +867,7 @@ export default function App() {
   const [kokoroStatus, setKokoroStatus] = useState<{ found: boolean; path: string; sizeMb: number }>({ found: true, path: 'builtin_android_tts', sizeMb: 0 });
   const [isAllModelsReady, setIsAllModelsReady] = useState(false);
   const [isCheckingModels, setIsCheckingModels] = useState(false);
+  const isModelAvailable = isAllModelsReady || gemmaStatus.found || isModelReady;
 
   // UI Toast Message State
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -954,6 +958,69 @@ export default function App() {
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
   const activeMessages = activeSession?.messages ?? [];
 
+  // --- REAL DYNAMIC LEARNING STREAK ENGINE ---
+  const checkAndUpdateDailyStreak = async (markActivity = false): Promise<number> => {
+    try {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const todayStr = `${year}-${month}-${day}`;
+
+      const storedStreakStr = await AsyncStorage.getItem('@guru_streak_count');
+      const lastStreakDate = await AsyncStorage.getItem('@guru_last_streak_date');
+
+      let currentStreak = storedStreakStr ? parseInt(storedStreakStr, 10) : 0;
+      if (isNaN(currentStreak) || currentStreak < 0) {
+        currentStreak = 0;
+      }
+
+      if (!lastStreakDate) {
+        const initialStreak = 1;
+        await AsyncStorage.setItem('@guru_streak_count', String(initialStreak));
+        await AsyncStorage.setItem('@guru_last_streak_date', todayStr);
+        setStreakCount(initialStreak);
+        return initialStreak;
+      }
+
+      if (lastStreakDate === todayStr) {
+        const effectiveStreak = Math.max(1, currentStreak);
+        setStreakCount(effectiveStreak);
+        return effectiveStreak;
+      }
+
+      const lastDateParts = lastStreakDate.split('-').map((p) => parseInt(p, 10));
+      const lastDateObj = new Date(lastDateParts[0], lastDateParts[1] - 1, lastDateParts[2]);
+      const todayDateObj = new Date(year, today.getMonth(), today.getDate());
+
+      const diffMs = todayDateObj.getTime() - lastDateObj.getTime();
+      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+      let newStreak = currentStreak;
+      if (diffDays === 1) {
+        newStreak = currentStreak + 1;
+        await AsyncStorage.setItem('@guru_streak_count', String(newStreak));
+        await AsyncStorage.setItem('@guru_last_streak_date', todayStr);
+        setStreakCount(newStreak);
+        if (markActivity) {
+          showToast(`Streak maintained: ${newStreak} Days in a row!`);
+        }
+      } else if (diffDays > 1) {
+        newStreak = 1;
+        await AsyncStorage.setItem('@guru_streak_count', String(newStreak));
+        await AsyncStorage.setItem('@guru_last_streak_date', todayStr);
+        setStreakCount(newStreak);
+      } else {
+        newStreak = Math.max(1, currentStreak);
+        setStreakCount(newStreak);
+      }
+      return newStreak;
+    } catch (err) {
+      console.warn('Streak update error:', err);
+      return 1;
+    }
+  };
+
   const generateScienceAiQuiz = async (chapterId?: number | null) => {
     setSelectedOption(null);
     setQuizStatus('idle');
@@ -964,7 +1031,15 @@ export default function App() {
       ? `Chapter ${selectedChapter.id}: ${selectedChapter.name} (${selectedChapter.nameNe})`
       : 'Science (All 19 Chapters)';
 
-    if (!isModelReady || Platform.OS !== 'android' || !NativeModules.LLMInferenceModule?.generateResponse) {
+    if (!isModelReady && Platform.OS === 'android' && gemmaStatus.path && NativeModules.LLMInferenceModule?.initModel) {
+      try {
+        await NativeModules.LLMInferenceModule.initModel(gemmaStatus.path);
+        setIsModelReady(true);
+        modelReadyRef.current = true;
+      } catch (_) {}
+    }
+
+    if (!isModelReady && !modelReadyRef.current) {
       const fallbackMcq = getRandomScienceMCQ(targetChId || undefined);
       if (fallbackMcq) {
         setCurrentQuiz({
@@ -982,10 +1057,19 @@ export default function App() {
     const quizRequestId = `sci_quiz_${Date.now()}`;
     const chapterContext = getScienceChapterContextForGemma(targetChId || undefined);
 
-    const quizPrompt = `${chapterContext}
+    const quizPrompt = `<start_of_turn>user
+You are Guru, an expert Nepal Class 10 SEE Science teacher.
+${chapterContext}
 
-Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic multiple choice question for ${chapterNameDisplay}. Respond ONLY with a valid JSON object matching this schema, with no markdown code fences and no other text:
-{"subject":"${chapterNameDisplay}","question":"Question text here?","options":["Option A","Option B","Option C","Option D"],"correctIndex":0,"explanation":"Brief 1-2 sentence explanation why this answer is correct based on textbook."}`;
+Task: Based strictly on the Nepal CDC Class 10 Science curriculum above, create 1 authentic multiple choice question for ${chapterNameDisplay}.
+Rules:
+1. Provide 4 options (A, B, C, D) with exactly one correct answer.
+2. Provide correctIndex (0 for first option, 1 for second, 2 for third, 3 for fourth).
+3. Provide a brief explanation citing scientific principles from the textbook.
+4. Output MUST be ONLY a single raw valid JSON object with NO markdown formatting, NO backticks:
+{"subject":"${chapterNameDisplay}","question":"Question text here?","options":["Option A","Option B","Option C","Option D"],"correctIndex":0,"explanation":"Brief 1-2 sentence explanation."}<end_of_turn>
+<start_of_turn>model
+`;
 
     const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event) => {
       if (event.requestId !== quizRequestId) return;
@@ -996,7 +1080,10 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
         const raw = (event.text || event.fullResponse || '').trim();
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
+          const clean = jsonMatch[0]
+            .replace(/,\s*([}\]])/g, '$1')
+            .replace(/[\u201C\u201D]/g, '"');
+          const parsed = JSON.parse(clean);
           if (
             parsed.question &&
             Array.isArray(parsed.options) &&
@@ -1008,7 +1095,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
               question: parsed.question,
               options: parsed.options.slice(0, 4),
               correctIndex: Math.min(3, Math.max(0, parsed.correctIndex)),
-              explanation: parsed.explanation || 'Correct scientific concept from textbook.',
+              explanation: parsed.explanation || 'Authentic scientific principle from Nepal CDC Class 10 syllabus.',
             });
             return;
           }
@@ -1253,6 +1340,9 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
           setDailyMcqCount(parseInt(storedDailyMcq, 10) || 0);
         }
 
+        // Initialize / check real daily streak
+        await checkAndUpdateDailyStreak(false);
+
         pickRandomQuiz();
       } catch (err) {
         console.warn('Boot initialization issue:', err);
@@ -1449,6 +1539,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
     setVoiceModeTranscript(userUtterance);
     setVoiceModeState('thinking');
     setVoiceModeAiText('Thinking...');
+    void checkAndUpdateDailyStreak(true);
 
     try {
       const requestId = Math.random().toString(36).slice(2, 10);
@@ -1554,7 +1645,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
           setDownloadProgress(100);
           setIsDownloading(false);
           await verifyAllModels();
-          showToast('Download complete! Tap "Enter Guru" to start.');
+          showToast('Download complete! Tap "Enter Chat" to start.');
         }
       } else {
         setIsDownloading(false);
@@ -1621,28 +1712,26 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
   const finishDownloadAndEnterMain = async () => {
     try {
       await AsyncStorage.setItem('@guru_resources_ready', 'true');
+      setScreen('main');
+      setIsChatModalOpen(true);
       if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.checkAllModelsStatus) {
         const res = await NativeModules.LLMInferenceModule.checkAllModelsStatus();
         if (res?.gemmaPath) {
           await AsyncStorage.setItem(STORAGE_KEYS.modelPath, res.gemmaPath);
-          // Enter main screen immediately — don't wait for model init
-          setScreen('main');
-          showToast('Welcome to Guru! Loading AI model...');
-          // Init model in background so UI doesn't freeze on low RAM devices
+          showToast('Offline AI Brain ready!');
           try {
             await NativeModules.LLMInferenceModule.initModel(res.gemmaPath);
             setIsModelReady(true);
             modelReadyRef.current = true;
-            showToast('Offline AI Brain ready!');
           } catch (initErr) {
             console.warn('Model init deferred:', initErr);
-            showToast('AI model will load when you first ask a question.');
           }
           return;
         }
       }
     } catch (_) {}
     setScreen('main');
+    setIsChatModalOpen(true);
     showToast('Welcome to Guru Offline AI Tutor!');
   };
 
@@ -1705,6 +1794,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
         isLoadingPage: true,
         zoomScale: 1,
       });
+      void checkAndUpdateDailyStreak(true);
 
       await loadPdfPage(assetPath, 0);
     } catch (err) {
@@ -1930,6 +2020,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
     setAttachedFileContent(null);
     setAttachedImageUri(null);
     setIsGenerating(true);
+    void checkAndUpdateDailyStreak(true);
 
     activeGenerationRef.current = {
       requestId,
@@ -2030,6 +2121,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
   const handleQuizAnswer = (index: number) => {
     setSelectedOption(index);
     setQuizStatus(index === currentQuiz.correctIndex ? 'correct' : 'wrong');
+    void checkAndUpdateDailyStreak(true);
   };
 
   // --- REVENUECAT DONATION & SUPPORT ENGINE ---
@@ -2382,7 +2474,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
               >
                 <Check size={19} color="#000000" style={{ marginRight: 8 }} />
                 <Text style={styles.startLearningPrimaryBtnText}>
-                  Download Finished • Enter Guru
+                  Enter Chat
                 </Text>
                 <ArrowRight size={18} color="#000000" style={{ marginLeft: 8 }} />
               </TouchableOpacity>
@@ -2543,159 +2635,193 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
                 <Calendar size={14} color="#ffffff" style={{ marginRight: 5 }} />
                 <Text style={styles.statLabel}>DAILY STREAK</Text>
               </View>
-              <Text style={styles.statValue}>2 Days</Text>
-              <Text style={styles.statSubText}>offline learning days in a row</Text>
+              <Text style={styles.statValue}>{`${streakCount} Day${streakCount === 1 ? '' : 's'}`}</Text>
+              <Text style={styles.statSubText}>
+                {streakCount > 1 ? 'consecutive offline learning days' : 'start your offline learning streak today'}
+              </Text>
             </View>
             <StreakFlameRing size={62} />
           </View>
 
           {/* SCIENCE MCQ GENERATOR (ENLARGED & ALL ICONS WHITE) */}
-          <View style={styles.quizCard}>
-            <View style={styles.quizHeaderRow}>
-              <View style={styles.quizHeaderLeft}>
-                <Sparkles size={17} color="#ffffff" />
-                <Text style={styles.quizTitle}>Science MCQ Generator</Text>
-              </View>
-              <View style={styles.quizSubjectTag}>
-                <Text style={styles.quizSubjectTagText}>All 19 Chapters · 100% Free</Text>
-              </View>
-            </View>
-
-            {/* HORIZONTAL CHAPTER SELECTOR CAROUSEL */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingVertical: 10, gap: 8 }}
+          <View style={[styles.quizCard, !isModelAvailable && { overflow: 'hidden' }]}>
+            <View
+              style={!isModelAvailable ? { opacity: 0.12 } : undefined}
+              pointerEvents={!isModelAvailable ? 'none' : 'auto'}
             >
-              <TouchableOpacity
-                style={[
-                  styles.scienceChapterPill,
-                  selectedScienceChapterId === null && styles.scienceChapterPillActive,
-                ]}
-                onPress={() => {
-                  setSelectedScienceChapterId(null);
-                  void generateScienceAiQuiz(null);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.scienceChapterPillText,
-                    selectedScienceChapterId === null && styles.scienceChapterPillTextActive,
-                  ]}
-                >
-                  All 19 Chapters
-                </Text>
-              </TouchableOpacity>
-
-              {SCIENCE_19_CHAPTERS.map((ch) => {
-                const isChSelected = selectedScienceChapterId === ch.id;
-                return (
-                  <TouchableOpacity
-                    key={`sci-ch-${ch.id}`}
-                    style={[
-                      styles.scienceChapterPill,
-                      isChSelected && styles.scienceChapterPillActive,
-                    ]}
-                    onPress={() => {
-                      setSelectedScienceChapterId(ch.id);
-                      void generateScienceAiQuiz(ch.id);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.scienceChapterPillText,
-                        isChSelected && styles.scienceChapterPillTextActive,
-                      ]}
-                    >
-                      {`Ch ${ch.id}: ${ch.name.split(' ')[0]}`}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.quizCurrentChapterBadge}>
-              <Text style={styles.quizCurrentChapterBadgeText} numberOfLines={1}>
-                {currentQuiz.subject || 'Heredity (वंशानुक्रम)'}
-              </Text>
-            </View>
-
-            {isGeneratingQuiz ? (
-              <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 10 }}>
-                <ActivityIndicator size="small" color="#ffffff" />
-                <Text style={{ fontSize: 13.5, color: '#a1a1aa' }}>Guru AI is generating a fresh Science exam MCQ...</Text>
-              </View>
-            ) : (
-              <>
-                <Text style={styles.quizQuestionText}>{currentQuiz.question}</Text>
-
-                <View style={styles.quizOptionsGrid}>
-                  <View style={styles.quizRowTwo}>
-                    {currentQuiz.options.slice(0, 2).map((opt, idx) => {
-                      const isSelected = selectedOption === idx;
-                      const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
-                      const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
-                      return (
-                        <TouchableOpacity
-                          key={`${opt}-${idx}`}
-                          style={[
-                            styles.quizOptionPill,
-                            isSelected && styles.quizOptionPillSelected,
-                            isCorrect && styles.quizOptionPillCorrect,
-                            isWrong && styles.quizOptionPillWrong,
-                          ]}
-                          onPress={() => handleQuizAnswer(idx)}
-                        >
-                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
-                            {opt}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  <View style={styles.quizRowTwo}>
-                    {currentQuiz.options.slice(2, 4).map((opt, idx) => {
-                      const realIdx = idx + 2;
-                      const isSelected = selectedOption === realIdx;
-                      const isCorrect = quizStatus !== 'idle' && realIdx === currentQuiz.correctIndex;
-                      const isWrong = quizStatus === 'wrong' && isSelected && realIdx !== currentQuiz.correctIndex;
-                      return (
-                        <TouchableOpacity
-                          key={`${opt}-${realIdx}`}
-                          style={[
-                            styles.quizOptionPill,
-                            isSelected && styles.quizOptionPillSelected,
-                            isCorrect && styles.quizOptionPillCorrect,
-                            isWrong && styles.quizOptionPillWrong,
-                          ]}
-                          onPress={() => handleQuizAnswer(realIdx)}
-                        >
-                          <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
-                            {opt}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
+              <View style={styles.quizHeaderRow}>
+                <View style={styles.quizHeaderLeft}>
+                  <Sparkles size={17} color="#ffffff" />
+                  <Text style={styles.quizTitle}>Science MCQ Generator</Text>
                 </View>
+                <View style={styles.quizSubjectTag}>
+                  <Text style={styles.quizSubjectTagText}>All 19 Chapters · 100% Free</Text>
+                </View>
+              </View>
 
-                {quizStatus !== 'idle' && (
-                  <View style={[styles.feedbackBox, quizStatus === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong]}>
-                    <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Review Concept:'}</Text>
-                    <Text style={styles.feedbackExplain}>{currentQuiz.explanation}</Text>
+              {/* HORIZONTAL CHAPTER SELECTOR CAROUSEL */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingVertical: 10, gap: 8 }}
+              >
+                <TouchableOpacity
+                  style={[
+                    styles.scienceChapterPill,
+                    selectedScienceChapterId === null && styles.scienceChapterPillActive,
+                  ]}
+                  onPress={() => {
+                    setSelectedScienceChapterId(null);
+                    void generateScienceAiQuiz(null);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.scienceChapterPillText,
+                      selectedScienceChapterId === null && styles.scienceChapterPillTextActive,
+                    ]}
+                  >
+                    All 19 Chapters
+                  </Text>
+                </TouchableOpacity>
+
+                {SCIENCE_19_CHAPTERS.map((ch) => {
+                  const isChSelected = selectedScienceChapterId === ch.id;
+                  return (
+                    <TouchableOpacity
+                      key={`sci-ch-${ch.id}`}
+                      style={[
+                        styles.scienceChapterPill,
+                        isChSelected && styles.scienceChapterPillActive,
+                      ]}
+                      onPress={() => {
+                        setSelectedScienceChapterId(ch.id);
+                        void generateScienceAiQuiz(ch.id);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.scienceChapterPillText,
+                          isChSelected && styles.scienceChapterPillTextActive,
+                        ]}
+                      >
+                        {`Ch ${ch.id}: ${ch.name.split(' ')[0]}`}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <View style={styles.quizCurrentChapterBadge}>
+                <Text style={styles.quizCurrentChapterBadgeText} numberOfLines={1}>
+                  {currentQuiz.subject || 'Heredity (वंशानुक्रम)'}
+                </Text>
+              </View>
+
+              {isGeneratingQuiz ? (
+                <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 10 }}>
+                  <ActivityIndicator size="small" color="#ffffff" />
+                  <Text style={{ fontSize: 13.5, color: '#a1a1aa' }}>Guru AI is generating a fresh Science exam MCQ...</Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.quizQuestionText}>{currentQuiz.question}</Text>
+
+                  <View style={styles.quizOptionsGrid}>
+                    <View style={styles.quizRowTwo}>
+                      {currentQuiz.options.slice(0, 2).map((opt, idx) => {
+                        const isSelected = selectedOption === idx;
+                        const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
+                        const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
+                        return (
+                          <TouchableOpacity
+                            key={`${opt}-${idx}`}
+                            style={[
+                              styles.quizOptionPill,
+                              isSelected && styles.quizOptionPillSelected,
+                              isCorrect && styles.quizOptionPillCorrect,
+                              isWrong && styles.quizOptionPillWrong,
+                            ]}
+                            onPress={() => handleQuizAnswer(idx)}
+                          >
+                            <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
+                              {opt}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <View style={styles.quizRowTwo}>
+                      {currentQuiz.options.slice(2, 4).map((opt, idx) => {
+                        const realIdx = idx + 2;
+                        const isSelected = selectedOption === realIdx;
+                        const isCorrect = quizStatus !== 'idle' && realIdx === currentQuiz.correctIndex;
+                        const isWrong = quizStatus === 'wrong' && isSelected && realIdx !== currentQuiz.correctIndex;
+                        return (
+                          <TouchableOpacity
+                            key={`${opt}-${realIdx}`}
+                            style={[
+                              styles.quizOptionPill,
+                              isSelected && styles.quizOptionPillSelected,
+                              isCorrect && styles.quizOptionPillCorrect,
+                              isWrong && styles.quizOptionPillWrong,
+                            ]}
+                            onPress={() => handleQuizAnswer(realIdx)}
+                          >
+                            <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
+                              {opt}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   </View>
-                )}
-              </>
-            )}
 
-            <TouchableOpacity
-              style={[styles.newQuizButton, isGeneratingQuiz && { opacity: 0.6 }]}
-              onPress={pickRandomQuiz}
-              disabled={isGeneratingQuiz}
-            >
-              <Sparkles size={14} color="#ffffff" style={{ marginRight: 6 }} />
-              <Text style={styles.newQuizButtonText}>{isGeneratingQuiz ? 'Generating AI Science MCQ...' : 'Generate Next'}</Text>
-            </TouchableOpacity>
+                  {quizStatus !== 'idle' && (
+                    <View style={[styles.feedbackBox, quizStatus === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong]}>
+                      <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Review Concept:'}</Text>
+                      <Text style={styles.feedbackExplain}>{currentQuiz.explanation}</Text>
+                    </View>
+                  )}
+                </>
+              )}
+
+              <TouchableOpacity
+                style={[styles.newQuizButton, isGeneratingQuiz && { opacity: 0.6 }]}
+                onPress={pickRandomQuiz}
+                disabled={isGeneratingQuiz}
+              >
+                <Sparkles size={14} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.newQuizButtonText}>{isGeneratingQuiz ? 'Generating AI Science MCQ...' : 'Generate Next'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* LOCKED OVERLAY (Nepali Tala - Lock) WHEN MODELS ARE NOT DOWNLOADED */}
+            {!isModelAvailable && (
+              <View style={styles.mcqLockedOverlay}>
+                <TouchableOpacity
+                  style={styles.mcqLockCircle}
+                  onPress={handleOpenAIChat}
+                  activeOpacity={0.8}
+                >
+                  <Lock size={26} color="#ffffff" />
+                </TouchableOpacity>
+
+                <Text style={styles.mcqLockedTitle}>AI MCQ Generator Locked</Text>
+                <Text style={styles.mcqLockedSubtitle}>
+                  Generating dynamic Class 10 SEE exam MCQs requires on-device Gemma AI.
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.mcqUnlockBtn}
+                  onPress={handleOpenAIChat}
+                  activeOpacity={0.85}
+                >
+                  <Download size={15} color="#000000" style={{ marginRight: 7 }} />
+                  <Text style={styles.mcqUnlockBtnText}>Download Models to Unlock</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </ScrollView>
       )}
@@ -3344,17 +3470,6 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
                 <Text style={styles.dakshinaSponsorBtnText}>SPONSOR NOW</Text>
               )}
             </TouchableOpacity>
-
-            {/* Restore Sponsorship Button */}
-            <TouchableOpacity
-              style={{ alignSelf: 'center', marginTop: 14, padding: 8 }}
-              onPress={handleRestorePurchases}
-              activeOpacity={0.7}
-            >
-              <Text style={{ fontSize: 13, color: '#a1a1aa', textDecorationLine: 'underline' }}>
-                Restore Sponsorship / Purchases
-              </Text>
-            </TouchableOpacity>
           </View>
 
           {/* Profile Edit Row */}
@@ -3756,17 +3871,6 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
                     {`SPONSOR NOW • $${(sponsorCount * 1).toFixed(2)} USD`}
                   </Text>
                 )}
-              </TouchableOpacity>
-
-              {/* Restore Button */}
-              <TouchableOpacity
-                style={{ alignSelf: 'center', marginTop: 14, padding: 8 }}
-                onPress={handleRestorePurchases}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 13, color: '#a1a1aa', textDecorationLine: 'underline' }}>
-                  Restore Sponsorship / Purchases
-                </Text>
               </TouchableOpacity>
 
               <Text style={styles.paywallTermsNotice}>
@@ -4396,6 +4500,55 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
+    position: 'relative',
+  },
+  mcqLockedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(12, 12, 14, 0.90)',
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 22,
+    zIndex: 10,
+  },
+  mcqLockCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#18181b',
+    borderWidth: 1.5,
+    borderColor: '#3f3f46',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  mcqLockedTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  mcqLockedSubtitle: {
+    fontSize: 12.5,
+    color: '#a1a1aa',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 18,
+    maxWidth: 280,
+  },
+  mcqUnlockBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+  },
+  mcqUnlockBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#000000',
   },
   quizHeaderRow: {
     flexDirection: 'row',
@@ -4758,13 +4911,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
     borderTopWidth: 1,
     borderTopColor: '#18181b',
-    paddingTop: 10,
-    paddingBottom: Platform.OS === 'android' ? 38 : 22,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'android' ? 52 : 26,
   },
   tabItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 2,
   },
   tabLabel: {
     fontSize: 9.5,
@@ -4847,8 +5001,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: Platform.OS === 'android' ? 24 : 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'android' ? 36 : 14,
     backgroundColor: '#09090b',
     borderTopWidth: 1,
     borderTopColor: '#18181b',
@@ -5121,8 +5275,8 @@ const styles = StyleSheet.create({
   },
   chatInputBarContainer: {
     paddingHorizontal: 12,
-    paddingTop: 7,
-    paddingBottom: Platform.OS === 'android' ? 26 : 10,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'android' ? 38 : 14,
     backgroundColor: '#000000',
   },
   chatInputPillWrapper: {
