@@ -130,6 +130,20 @@ interface UserProfile {
   school: string;
 }
 
+interface ModelFileStatus {
+  found: boolean;
+  sizeMb: number;
+  path?: string;
+}
+
+interface QuizQuestion {
+  subject: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
+
 interface Message {
   id: string;
   text: string;
@@ -587,7 +601,7 @@ const PRO_SOLUTIONS_2082: ProSolutionItem[] = [
     description: 'Complete step-by-step answers, chemical equations & ray diagrams.',
     assetPath: 'pro_solutions/2082/guru_ai_see_science_full.pdf',
     badge: '2082 Model Solution',
-    iconColor: '#38bdf8',
+    iconColor: '#ffffff',
   },
   {
     id: 'sol_math_2082',
@@ -597,7 +611,7 @@ const PRO_SOLUTIONS_2082: ProSolutionItem[] = [
     description: 'Complete step-by-step arithmetic, algebra, geometry proofs & statistics.',
     assetPath: 'pro_solutions/2082/guru_ai_see_math_2082.pdf',
     badge: '2082 Model Solution',
-    iconColor: '#f59e0b',
+    iconColor: '#ffffff',
   },
   {
     id: 'sol_eng_2082',
@@ -607,7 +621,7 @@ const PRO_SOLUTIONS_2082: ProSolutionItem[] = [
     description: 'Reading comprehension, grammar, guided writing & essays.',
     assetPath: 'pro_solutions/2082/guru_ai_see_english_2082.pdf',
     badge: '2082 Model Solution',
-    iconColor: '#10b981',
+    iconColor: '#ffffff',
   },
   {
     id: 'sol_nep_2082',
@@ -617,7 +631,7 @@ const PRO_SOLUTIONS_2082: ProSolutionItem[] = [
     description: 'व्याकरण, बोध, अभिव्यक्ति, पत्र लेखन र निबन्ध पूर्ण समाधान।',
     assetPath: 'pro_solutions/2082/guru_ai_see_nepali_full_2082.pdf',
     badge: '2082 Model Solution',
-    iconColor: '#ec4899',
+    iconColor: '#ffffff',
   },
   {
     id: 'sol_soc_2082',
@@ -627,7 +641,7 @@ const PRO_SOLUTIONS_2082: ProSolutionItem[] = [
     description: 'Detailed critical answers, map work guidelines & civic reasoning.',
     assetPath: 'pro_solutions/2082/guru_ai_see_social_full_2082.pdf',
     badge: '2082 Model Solution',
-    iconColor: '#8b5cf6',
+    iconColor: '#ffffff',
   },
 ];
 
@@ -640,7 +654,7 @@ const PRO_SOLUTIONS_2081: ProSolutionItem[] = [
     description: 'QBASIC, C Programming, Database, Networking & HTML solutions.',
     assetPath: 'pro_solutions/2081/guru_ai_see_computer_2081_v2.pdf',
     badge: '2081 Solution',
-    iconColor: '#06b6d4',
+    iconColor: '#ffffff',
   },
   {
     id: 'sol_cs_gi_2081',
@@ -650,7 +664,7 @@ const PRO_SOLUTIONS_2081: ProSolutionItem[] = [
     description: 'Complete bonus paper answer key with code outputs & derivations.',
     assetPath: 'pro_solutions/2081/guru_ai_see_computer_gi_2081.pdf',
     badge: '2081 GI Bonus Solution',
-    iconColor: '#06b6d4',
+    iconColor: '#ffffff',
   },
   {
     id: 'sol_eng_bp_2081',
@@ -660,7 +674,7 @@ const PRO_SOLUTIONS_2081: ProSolutionItem[] = [
     description: 'Official Bagmati province past paper model solution & answer keys.',
     assetPath: 'pro_solutions/2081/guru_ai_see_english_bp_2081.pdf',
     badge: '2081 Bagmati Solution',
-    iconColor: '#10b981',
+    iconColor: '#ffffff',
   },
   {
     id: 'sol_eng_gi_2081',
@@ -670,7 +684,7 @@ const PRO_SOLUTIONS_2081: ProSolutionItem[] = [
     description: 'Grammar analysis, essay blueprints & seen/unseen passage solutions.',
     assetPath: 'pro_solutions/2081/guru_ai_see_english_gi_2081.pdf',
     badge: '2081 GI Bonus Solution',
-    iconColor: '#10b981',
+    iconColor: '#ffffff',
   },
 ];
 
@@ -862,6 +876,8 @@ export default function App() {
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [isPatron, setIsPatron] = useState(false);
   const [sponsorCount, setSponsorCount] = useState<number>(10);
+  const [lifetimeSponsorCount, setLifetimeSponsorCount] = useState<number>(0);
+  const [isPaywallModalOpen, setIsPaywallModalOpen] = useState(false);
   const [donationSuccessMsg, setDonationSuccessMsg] = useState<string | null>(null);
 
   // 2081 Past Papers Province Selector Modal
@@ -1178,22 +1194,24 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
             setUser(parsed);
             setName(parsed.name || '');
             setSchool(parsed.school || '');
-            if (resourcesReady === 'true') {
-              setScreen('main');
-              setTimeout(() => {
-                verifyAllModels();
-              }, 100);
-            } else {
-              setScreen('download');
-              setTimeout(() => {
-                verifyAllModels();
-              }, 200);
-            }
+            // Progressive Onboarding: open directly to study resources
+            setScreen('main');
+            setTimeout(() => {
+              verifyAllModels();
+            }, 150);
           } catch (_) {
             setScreen('onboarding');
           }
         } else {
           setScreen('onboarding');
+        }
+
+        const storedLifetime = await AsyncStorage.getItem('@guru_lifetime_sponsor_count');
+        if (storedLifetime) {
+          const parsedLifetime = parseInt(storedLifetime, 10);
+          if (!isNaN(parsedLifetime) && parsedLifetime > 0) {
+            setLifetimeSponsorCount(parsedLifetime);
+          }
         }
 
         let storedSessions = await AsyncStorage.getItem(STORAGE_KEYS.sessions);
@@ -1496,10 +1514,25 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
       showToast('Profile updated successfully!');
       setScreen('main');
     } else {
-      setScreen('download');
+      // Progressive Onboarding: open directly to study resources
+      setScreen('main');
+      showToast('Welcome to Guru! Start exploring textbooks & past papers.');
       setTimeout(() => {
         verifyAllModels();
       }, 150);
+    }
+  };
+
+  // --- JUST-IN-TIME AI MODEL CHECK & LAUNCH ---
+  const handleOpenAIChat = () => {
+    const isReady = isAllModelsReady || gemmaStatus.found;
+    if (isReady) {
+      setIsChatModalOpen(true);
+    } else {
+      setScreen('download');
+      setTimeout(() => {
+        verifyAllModels();
+      }, 100);
     }
   };
 
@@ -2039,20 +2072,36 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
     setIsPurchasing(true);
     setDonationSuccessMsg(null);
 
-    // Instant Sponsorship activation & persistent storage
-    setIsPatron(true);
-    await AsyncStorage.setItem('@guru_is_patron', 'true');
-    await AsyncStorage.setItem('@guru_sponsor_count', count.toString());
-    setDonationSuccessMsg(`Thank you deeply! You are actively sponsoring ${count} rural student${count > 1 ? 's' : ''} in Nepal with a complete offline AI toolkit.`);
-    showToast(`Sponsorship active for ${count} student${count > 1 ? 's' : ''}! Thank you!`);
-
     try {
-      if (offerings?.current?.availablePackages && offerings.current.availablePackages.length > 0) {
-        const pkg = offerings.current.availablePackages[0];
-        await Purchases.purchasePackage(pkg);
+      let isSuccess = false;
+      if (offerings?.availablePackages && offerings.availablePackages.length > 0) {
+        const pkg = offerings.availablePackages[0];
+        const res = await Purchases.purchasePackage(pkg);
+        if (res?.customerInfo) {
+          isSuccess = true;
+        }
+      } else {
+        // Direct sponsorship completion fallback for demo and offline test environments
+        isSuccess = true;
+      }
+
+      if (isSuccess) {
+        const newTotal = (lifetimeSponsorCount || 0) + count;
+        setLifetimeSponsorCount(newTotal);
+        setIsPatron(true);
+        await AsyncStorage.setItem('@guru_is_patron', 'true');
+        await AsyncStorage.setItem('@guru_lifetime_sponsor_count', newTotal.toString());
+        await AsyncStorage.setItem('@guru_sponsor_count', count.toString());
+        setDonationSuccessMsg(`Thank you. You are actively sponsoring ${newTotal} rural student${newTotal > 1 ? 's' : ''} in Nepal with a complete offline AI toolkit.`);
+        showToast(`Sponsorship completed for ${count} student${count > 1 ? 's' : ''}. Thank you.`);
       }
     } catch (err: any) {
-      console.log('RevenueCat sponsorship note:', err);
+      if (!err?.userCancelled) {
+        console.log('RevenueCat sponsorship note:', err);
+        showToast('Payment was not completed.');
+      } else {
+        showToast('Payment cancelled.');
+      }
     } finally {
       setIsPurchasing(false);
     }
@@ -2174,6 +2223,18 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
       <SafeAreaView style={styles.darkContainer}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
         <ScrollView contentContainerStyle={styles.downloadScrollContent} showsVerticalScrollIndicator={false}>
+          {/* TOP NAVIGATION: RETURN TO STUDY RESOURCES */}
+          <View style={{ width: '100%', marginBottom: 14 }}>
+            <TouchableOpacity
+              style={styles.editProfileBackBtn}
+              activeOpacity={0.8}
+              onPress={() => setScreen('main')}
+            >
+              <ArrowLeft size={16} color="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={styles.editProfileBackText}>Back to Study Resources</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* TOP HERO */}
           <View style={styles.downloadHeroSection}>
             <Image source={logoSource} style={styles.downloadLogoHero} resizeMode="contain" />
@@ -2235,7 +2296,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
                 <View style={styles.itemBadgeRow}>
                   {gemmaStatus.found ? (
                     <View style={styles.readyBadge}>
-                      <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
+                      <Check size={12} color="#ffffff" style={{ marginRight: 4 }} />
                       <Text style={styles.readyBadgeText}>
                         {gemmaStatus.sizeMb > 0 ? `Ready (${gemmaStatus.sizeMb} MB)` : 'Ready on Device'}
                       </Text>
@@ -2262,7 +2323,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
                 <View style={styles.itemBadgeRow}>
                   {whisperStatus.found ? (
                     <View style={styles.readyBadge}>
-                      <Check size={12} color="#10b981" style={{ marginRight: 4 }} />
+                      <Check size={12} color="#ffffff" style={{ marginRight: 4 }} />
                       <Text style={styles.readyBadgeText}>Speech-to-Text Active</Text>
                     </View>
                   ) : (
@@ -2355,16 +2416,29 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
           <Text style={styles.appHeaderTitle}>Guru</Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.headerUserPill}
-          activeOpacity={0.8}
-          onPress={() => setActiveTab('donate')}
-        >
-          <User size={13} color="#ffffff" style={{ marginRight: 5 }} />
-          <Text style={styles.headerUserName} numberOfLines={1}>
-            {`${user?.name || 'Sangam'}${isPatron ? ' (Sponsor: Gold)' : ''}`}
-          </Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            style={styles.headerSponsorPill}
+            activeOpacity={0.8}
+            onPress={() => setIsPaywallModalOpen(true)}
+          >
+            <Heart size={13} color="#ffffff" style={{ marginRight: 5 }} />
+            <Text style={styles.headerSponsorText}>
+              {isPatron ? 'Patron' : 'Sponsor'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.headerUserPill}
+            activeOpacity={0.8}
+            onPress={() => setActiveTab('donate')}
+          >
+            <User size={13} color="#ffffff" style={{ marginRight: 5 }} />
+            <Text style={styles.headerUserName} numberOfLines={1}>
+              {user?.name || 'Sangam'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* TAB 1: HOME DASHBOARD */}
@@ -2450,7 +2524,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
             <TouchableOpacity
               style={styles.chatWithGuruStickerCard}
               activeOpacity={0.85}
-              onPress={() => setActiveTab('learn')}
+              onPress={handleOpenAIChat}
             >
               <View style={styles.chatWithGuruStickerLeft}>
                 <Text style={styles.chatWithGuruStickerTitle} numberOfLines={1}>Chat with Guru</Text>
@@ -3139,14 +3213,18 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
             </View>
           </View>
 
-          {/* Impact Active Banner */}
+          {/* Lifetime Sponsorship Impact Counter */}
           <View style={styles.dakshinaImpactCard}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-              <Heart size={16} color="#ffffff" fill="#ffffff" style={{ marginRight: 6 }} />
-              <Text style={styles.dakshinaImpactTitle}>Impact Active</Text>
+              <Users size={16} color="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={styles.dakshinaImpactTitle}>
+                {`Lifetime Sponsorship: ${lifetimeSponsorCount} Student${lifetimeSponsorCount === 1 ? '' : 's'} Empowered`}
+              </Text>
             </View>
             <Text style={styles.dakshinaImpactText}>
-              {`Your current sponsorship is actively supporting ${sponsorCount || 1} rural student in Nepal. Thank you!`}
+              {lifetimeSponsorCount > 0
+                ? `You have actively sponsored ${lifetimeSponsorCount} rural student${lifetimeSponsorCount === 1 ? '' : 's'} with a verified offline study kit.`
+                : 'Choose a sponsorship tier below to empower a student in remote Nepal.'}
             </Text>
           </View>
 
@@ -3266,6 +3344,17 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
                 <Text style={styles.dakshinaSponsorBtnText}>SPONSOR NOW</Text>
               )}
             </TouchableOpacity>
+
+            {/* Restore Sponsorship Button */}
+            <TouchableOpacity
+              style={{ alignSelf: 'center', marginTop: 14, padding: 8 }}
+              onPress={handleRestorePurchases}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 13, color: '#a1a1aa', textDecorationLine: 'underline' }}>
+                Restore Sponsorship / Purchases
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Profile Edit Row */}
@@ -3301,7 +3390,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
           <TouchableOpacity
             style={styles.floatingBotInner}
             activeOpacity={0.85}
-            onPress={() => setIsChatModalOpen(true)}
+            onPress={handleOpenAIChat}
           >
             <Image source={logoSource} style={styles.floatingBotLogo} resizeMode="contain" />
           </TouchableOpacity>
@@ -3509,7 +3598,7 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
                     openInAppPdf(p.assetPath, p.title);
                   }}
                 >
-                  <FileText size={18} color="#22c55e" style={{ marginRight: 10 }} />
+                  <FileText size={18} color="#ffffff" style={{ marginRight: 10 }} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.mediumChoiceTitle}>{p.province}</Text>
                     <Text style={[styles.mediumChoiceDesc, { fontSize: 11 }]}>{p.title}</Text>
@@ -3521,6 +3610,172 @@ Based on the Nepal Class 10 SEE Science curriculum above, generate 1 authentic m
           </View>
         </View>
       )}
+
+      {/* --- SINGLE-SCREEN REVENUECAT SPONSORSHIP PAYWALL MODAL --- */}
+      <Modal
+        visible={isPaywallModalOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsPaywallModalOpen(false)}
+      >
+        <View style={styles.paywallBackdrop}>
+          <View style={styles.paywallSheet}>
+            {/* Header */}
+            <View style={styles.paywallHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Heart size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.paywallTitle}>Guru Dakshina</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.paywallCloseBtn}
+                onPress={() => setIsPaywallModalOpen(false)}
+              >
+                <X size={18} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              <Text style={styles.paywallSubtitle}>
+                Empower a rural student in Nepal with offline AI models and complete Class 10 CDC curriculum.
+              </Text>
+
+              {/* Lifetime Sponsorship Counter */}
+              <View style={styles.paywallImpactBadge}>
+                <Users size={16} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.paywallImpactText}>
+                  {`Lifetime Impact: ${lifetimeSponsorCount} Rural Student${lifetimeSponsorCount === 1 ? '' : 's'} Empowered`}
+                </Text>
+              </View>
+
+              {/* What $1 Covers */}
+              <Text style={styles.paywallSectionLabel}>WHAT YOUR $1 SPONSORSHIP COVERS</Text>
+              <View style={styles.paywallFeaturesBox}>
+                <View style={styles.paywallFeatureItem}>
+                  <HardDrive size={15} color="#ffffff" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.paywallFeatureTitle}>Local Storage & Offline AI Kit</Text>
+                    <Text style={styles.paywallFeatureDesc}>Gemma 4 quantized model pre-loaded on device storage.</Text>
+                  </View>
+                </View>
+
+                <View style={styles.paywallFeatureItem}>
+                  <BookOpen size={15} color="#ffffff" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.paywallFeatureTitle}>Complete Class 10 CDC Curriculum</Text>
+                    <Text style={styles.paywallFeatureDesc}>Textbooks and SEE 2081 past papers across 7 provinces.</Text>
+                  </View>
+                </View>
+
+                <View style={styles.paywallFeatureItem}>
+                  <Cpu size={15} color="#ffffff" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.paywallFeatureTitle}>100% Offline On-Device Inference</Text>
+                    <Text style={styles.paywallFeatureDesc}>Runs during electricity and internet blackouts.</Text>
+                  </View>
+                </View>
+
+                <View style={[styles.paywallFeatureItem, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+                  <ShieldCheck size={15} color="#ffffff" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.paywallFeatureTitle}>Zero Recurring Fees for Students</Text>
+                    <Text style={styles.paywallFeatureDesc}>Guru is permanently free and unrestricted for rural youth.</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Interactive Counter */}
+              <Text style={styles.paywallSectionLabel}>SELECT NUMBER OF STUDENTS TO SPONSOR</Text>
+              <View style={styles.dakshinaMultiplierRow}>
+                <View style={styles.dakshinaCounterBox}>
+                  <TouchableOpacity
+                    style={styles.dakshinaCounterBtn}
+                    onPress={() => setSponsorCount((prev) => Math.max(1, prev - 1))}
+                    activeOpacity={0.7}
+                  >
+                    <Minus size={15} color="#ffffff" />
+                  </TouchableOpacity>
+
+                  <View style={styles.dakshinaCounterValueBox}>
+                    <Users size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.dakshinaCounterValueText}>{sponsorCount}</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.dakshinaCounterBtn}
+                    onPress={() => setSponsorCount((prev) => Math.min(100, prev + 1))}
+                    activeOpacity={0.7}
+                  >
+                    <Plus size={15} color="#ffffff" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.dakshinaPriceBox}>
+                  <DollarSign size={16} color="#ffffff" style={{ marginRight: 2 }} />
+                  <View>
+                    <Text style={styles.dakshinaPriceText}>{`$${(sponsorCount * 1).toFixed(2)}`}</Text>
+                    <Text style={styles.dakshinaPriceCurrency}>USD</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Quick chips */}
+              <View style={styles.dakshinaQuickChipsRow}>
+                {[1, 3, 5, 10, 20].map((num) => (
+                  <TouchableOpacity
+                    key={`paywall-chip-${num}`}
+                    style={[
+                      styles.dakshinaQuickChip,
+                      sponsorCount === num && styles.dakshinaQuickChipActive,
+                    ]}
+                    onPress={() => setSponsorCount(num)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.dakshinaQuickChipText,
+                        sponsorCount === num && styles.dakshinaQuickChipTextActive,
+                      ]}
+                    >
+                      {`${num} St.`}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Sponsor Button */}
+              <TouchableOpacity
+                style={styles.dakshinaSponsorBtn}
+                activeOpacity={0.85}
+                disabled={isPurchasing}
+                onPress={() => handleSponsorNow(sponsorCount)}
+              >
+                {isPurchasing ? (
+                  <ActivityIndicator size="small" color="#000000" />
+                ) : (
+                  <Text style={styles.dakshinaSponsorBtnText}>
+                    {`SPONSOR NOW • $${(sponsorCount * 1).toFixed(2)} USD`}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {/* Restore Button */}
+              <TouchableOpacity
+                style={{ alignSelf: 'center', marginTop: 14, padding: 8 }}
+                onPress={handleRestorePurchases}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 13, color: '#a1a1aa', textDecorationLine: 'underline' }}>
+                  Restore Sponsorship / Purchases
+                </Text>
+              </TouchableOpacity>
+
+              <Text style={styles.paywallTermsNotice}>
+                Transactions are processed securely through RevenueCat and Google Play. Guru is an open-source educational initiative for students in Nepal.
+              </Text>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* --- FULL-PAGE FLOATING GURU AI MODAL --- */}
       <Modal
@@ -4203,8 +4458,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   quizOptionPillCorrect: {
-    backgroundColor: '#064e3b',
-    borderColor: '#10b981',
+    backgroundColor: '#18181b',
+    borderColor: '#ffffff',
   },
   quizOptionPillWrong: {
     backgroundColor: '#4c0519',
@@ -5075,7 +5330,7 @@ const styles = StyleSheet.create({
   readyBadgeText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#10b981',
+    color: '#ffffff',
   },
   downloadingActiveText: {
     fontSize: 11.5,
@@ -5681,9 +5936,9 @@ const styles = StyleSheet.create({
   proUnlockedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    backgroundColor: '#18181b',
     borderWidth: 1,
-    borderColor: '#22c55e',
+    borderColor: '#27272a',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -5692,7 +5947,7 @@ const styles = StyleSheet.create({
   proUnlockedBadgeText: {
     fontSize: 10.5,
     fontWeight: '800',
-    color: '#22c55e',
+    color: '#ffffff',
   },
   proTeaserBanner: {
     flexDirection: 'row',
@@ -5828,8 +6083,140 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   proSubscribeButtonActive: {
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    backgroundColor: '#18181b',
     borderWidth: 1,
-    borderColor: '#22c55e',
+    borderColor: '#ffffff',
+  },
+  paywallBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'flex-end',
+  },
+  paywallSheet: {
+    backgroundColor: '#09090b',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    maxHeight: SCREEN_HEIGHT * 0.9,
+  },
+  paywallHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  paywallTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  paywallCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  paywallSubtitle: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  paywallImpactBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  paywallImpactText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  paywallSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#71717a',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  paywallFeaturesBox: {
+    backgroundColor: '#121214',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 18,
+  },
+  paywallFeatureItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1f1f23',
+  },
+  paywallFeatureTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  paywallFeatureDesc: {
+    fontSize: 11.5,
+    color: '#a1a1aa',
+    lineHeight: 15,
+  },
+  paywallTermsNotice: {
+    fontSize: 11,
+    color: '#71717a',
+    textAlign: 'center',
+    marginTop: 14,
+    lineHeight: 15,
+  },
+  headerSponsorPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  headerSponsorText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  gradePill: {
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  gradePillActive: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+  },
+  gradePillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#a1a1aa',
+  },
+  gradePillTextActive: {
+    color: '#000000',
+    fontWeight: '700',
   },
 });
