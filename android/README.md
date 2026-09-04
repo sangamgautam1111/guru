@@ -1,37 +1,35 @@
-﻿# Guru Native Android Engine (ndroid/)
+# Native Android Engine (`android/`)
 
-This directory contains the custom native Android implementation powering **Guru's on-device AI inference engine**, speech recognition, optical character recognition (OCR), and background download resilience.
-
----
-
-## Core Native Components
-
-### 1. LLMInferenceModule.kt
-The central JNI bridge connecting React Native to Google's **LiteRT-LM C++ runtime**.
-- **Model Loading**: Maps the 4-bit dynamically quantized Gemma 4 E2B model (litertlm) into system memory.
-- **Hardware-Aware Backend Selection**: Automatically prioritizes GPU compute shaders if supported drivers exist, with an instant, crash-free fallback to multi-threaded CPU execution for budget chipsets (e.g., MediaTek Helio G85).
-- **Streaming Generation**: Emits token chunks (LiteRTResponseChunk) across the React Native bridge in real time without blocking the Android UI thread.
-- **Memory Management**: Enforces strict context window limits to ensure stable execution on devices with 3 to 4 GB of RAM.
-
-### 2. ModelDownloadService.kt
-A high-resilience Android **Foreground Service** engineered for low-connectivity environments.
-- **HTTP Byte-Range Resume**: Uses Range: bytes={offset}- headers with HTTP 206 Partial Content so interrupted downloads continue from the exact byte rather than restarting from zero.
-- **System Locks**:
-  - PARTIAL_WAKE_LOCK: 12-hour background execution lock to prevent Android deep sleep from killing downloads when the display turns off.
-  - WifiLock (WIFI_MODE_FULL_HIGH_PERF): Prevents Wi-Fi chip throttling during screen-off operation.
-- **Exponential Backoff**: Up to 50 automatic reconnection attempts with exponential backoff to handle temporary Wi-Fi drops.
-
-### 3. Speech & Vision Pipeline
-- **On-Device Whisper STT**: Quantized Whisper model running natively to transcribe spoken questions offline.
-- **Google ML Kit Vision**: High-accuracy on-device text recognition for printed and handwritten textbook questions.
+This folder contains the native Kotlin and C++ layer of Guru. Because React Native can't run large AI models or low-level background services on its own, I wrote custom Android code to handle the heavy lifting.
 
 ---
 
-## Build Configuration
+## How the Native Code Works
 
-- **Target SDK**: 35 (Android 15)
-- **Compile SDK**: 34
-- **Build Tools**: 34.0.0
-- **NDK**: 26.1.10909125
-- **Kotlin**: 2.0.21
-- **Supported Architectures**: rm64-v8a, rmeabi-v7a
+### 1. `LLMInferenceModule.kt` (The AI Engine Bridge)
+This is the bridge connecting our React Native UI to Google's **LiteRT-LM C++ runtime**.
+- **Runs Gemma on Phone RAM**: Loads the 4-bit quantized Gemma 4 E2B model directly into device memory so answers generate without any internet.
+- **Hardware Fallback**: It checks the phone hardware automatically. If the GPU supports AI shaders, it uses it for speed; if not (like on budget MediaTek chips common in Nepal), it smoothly falls back to multi-core CPU execution so the phone never crashes.
+- **Live Streaming**: Streams tokens back to the screen as soon as they are generated so students don't have to wait for the full answer to load.
+- **Low-RAM Protection**: Caps the context window to prevent Out-Of-Memory (OOM) crashes on 3GB and 4GB RAM phones.
+
+### 2. `ModelDownloadService.kt` (Background Download Resumes)
+Downloading 2.5 GB on slow, unstable Wi-Fi in Nepal was one of my biggest challenges. This foreground service keeps downloads safe:
+- **Resumes From Exact Byte**: Uses HTTP `Range` headers so if the connection drops at 75%, it picks up right at 75% when reconnected instead of restarting from zero.
+- **Screen-Off Protection**: Acquires a `WakeLock` and high-performance `WifiLock` so Android's battery saver doesn't pause or kill the download when you lock your screen.
+- **Automatic Reconnects**: Tries up to 50 times with backoff delays to survive power cuts and spotty Wi-Fi.
+
+### 3. Voice and Camera
+- **On-Device Whisper**: Transcribes spoken questions into text completely offline using a quantized Whisper model.
+- **Google ML Kit OCR**: Recognizes printed and handwritten text from textbook photos taken by the camera.
+
+---
+
+## Build Specs
+
+- Target SDK: 35 (Android 15)
+- Compile SDK: 34
+- Build Tools: 34.0.0
+- NDK: 26.1.10909125
+- Kotlin: 2.0.21
+- Supported Architectures: arm64-v8a, armeabi-v7a

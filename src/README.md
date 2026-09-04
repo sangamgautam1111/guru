@@ -1,28 +1,28 @@
-﻿# Guru Application Logic & Services (src/)
+# App Services & Curriculum Logic (`src/`)
 
-This directory contains the core TypeScript business logic, curriculum conditioning services, and typed abstractions for on-device inference.
-
----
-
-## Directory Architecture
-
-### src/services/
-
-- **inference/GemmaRunner.ts**:
-  Typed TypeScript wrapper for NativeModules.LLMInferenceModule. Manages event subscriptions (LiteRTResponseChunk, LiteRTResponseDone, LiteRTResponseError), token streaming callbacks, and engine lifecycle controls.
-
-- **curriculum/CurriculumService.ts**:
-  Lightweight on-device prompt conditioning service. Normalizes student input, matches keywords against local curriculum chunks, and injects Nepal CDC syllabus context before sending prompts to Gemma 4.
-
-### src/data/
-
-- **curriculumData.ts**:
-  Structured offline curriculum reference data for Class 9 and Class 10 (Compulsory Math, Optional Math, Science, Social Studies, English, Nepali, Computer Science). Provides grade-specific prompt rules, formula references, and SEE marking criteria.
+This folder contains the TypeScript logic, curriculum data, and service wrappers that connect our screens to the native Android engine.
 
 ---
 
-## Design Principles
+## What's in Here
 
-1. **Zero Cloud Dependency**: All services, prompt conditioning, and matching algorithms execute locally in-memory.
-2. **Type Safety**: Full TypeScript type definitions for all curriculum schemas, generation events, and native bridge interfaces.
-3. **Graceful Degradation**: Inference and curriculum services maintain local fallbacks when peripheral capabilities (e.g., camera OCR or voice) are not in use.
+### `src/services/`
+
+- **`inference/GemmaRunner.ts`**:
+  A clean TypeScript wrapper for the native inference bridge. It manages listeners for streamed tokens, completion signals, and errors so the UI stays simple and responsive.
+
+- **`curriculum/CurriculumService.ts`**:
+  Helps Gemma give accurate, curriculum-aligned answers. When a student asks a question, this service looks through local textbook keywords and adds relevant Class 10 Nepal CDC syllabus context to the prompt before Gemma answers.
+
+### `src/data/`
+
+- **`curriculumData.ts`**:
+  Contains structured offline syllabus data for Class 9 and Class 10 (Math, Science, Social Studies, English, Nepali, Computer Science). It includes formulas, important topics, and SEE exam marking guidelines.
+
+---
+
+## Key Principles
+
+1. **100% Offline**: All curriculum matching, syllabus data, and inference wrappers run directly in memory without contacting any server.
+2. **Type Safe**: Fully typed interfaces for all curriculum topics, exam questions, and streaming events.
+3. **No Crashes**: If camera OCR or microphone access isn't available, the app gracefully falls back to text-only study.
