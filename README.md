@@ -3,6 +3,7 @@
 ### The Offline AI Tutor for Low-Connectivity Areas
 
 [![Shipathon 2026](https://img.shields.io/badge/Shipathon-2026-blue?style=flat-square)](https://www.shipathon.com)
+[![RevenueCat](https://img.shields.io/badge/RevenueCat-Next_Gen_Track-ff5a5f?style=flat-square&logo=revenuecat)](https://github.com/sangamgautam1111/guru/blob/master/App.tsx#L1986-L2075)
 [![Status](https://img.shields.io/badge/Status-Shipped-brightgreen?style=flat-square)](https://github.com/sangamgautam1111/guru/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
@@ -38,6 +39,18 @@ Download the latest release APK directly for Android:
 3. **Download AI models when ready**: When you want to chat with Guru, tap "Chat with Guru" to download the Gemma and Whisper models (~2.5 GB). You'll see real-time download speed and progress.
 4. **Grant permissions**: Allow camera and microphone access so you can take photos of textbook questions and speak into the mic.
 5. **Learn completely offline**: Turn on Airplane mode if you'd like. Once downloaded, asking questions, photo solving, voice recognition, and all books work 100% offline without any internet.
+
+## RevenueCat Integration
+
+Guru is built for the **RevenueCat Shipathon 2026 (Next Gen Track)**. I integrated RevenueCat to handle **Guru Dakshina** — our community sponsorship system where supporters can sponsor offline AI kits for rural students.
+
+[![View RevenueCat Code](https://img.shields.io/badge/View_RevenueCat_Code-App.tsx_(Lines_1986--2075)-ff5a5f?style=for-the-badge&logo=revenuecat)](https://github.com/sangamgautam1111/guru/blob/master/App.tsx#L1986-L2075)
+
+Click the button above to jump directly to the exact implementation in `App.tsx` (lines 1986–2075):
+- SDK initialization (`Purchases.configure`)
+- Checking active entitlements and listening for updates
+- Loading offerings and processing sponsorship packages
+- Restoring purchases
 
 ## Hardware Performance Benchmark
 
