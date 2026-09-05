@@ -6,6 +6,9 @@
 [![Status](https://img.shields.io/badge/Status-Shipped-brightgreen?style=flat-square)](https://github.com/sangamgautam1111/guru/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
+![Guru Classroom Pilot in Nepal](assets/classroom_pilot.jpg)
+*Real-world classroom pilot in Nepal: Grade 10 SEE students learning with Guru offline AI on the classroom display.*
+
 An offline AI tutor designed to help students learn concepts with an AI model developed by Google DeepMind. We implemented a JNI–Kotlin bridge to run a quantized Gemma model directly on local hardware, whether it’s a GPU or CPU.
 
 ## Features
