@@ -120,7 +120,7 @@ import {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-type TabState = 'home' | 'learn' | 'revision' | 'donate';
+type TabState = 'home' | 'revision' | 'donate';
 type ScreenState = 'onboarding' | 'download' | 'main';
 type SubjectId = 'science' | 'math' | 'social' | 'nepali' | 'english' | 'opt_math' | 'computer';
 type QuizStatus = 'idle' | 'correct' | 'wrong';
@@ -791,9 +791,8 @@ export default function App() {
   const [name, setName] = useState('');
   const [school, setSchool] = useState('');
 
-  // AI Chat & Multi-Turn Sessions
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // AI Chat Messages (Single Continuous Conversation with Guru)
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
@@ -823,9 +822,6 @@ export default function App() {
   // In-App Native PDF Viewer State
   const [activePdf, setActivePdf] = useState<ActivePdfState | null>(null);
 
-  // Sidebar Drawer for Chat Hub
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
   // Floating Guru AI Bot State (Draggable & Expandable Overlay)
   const [isChatModalOpen, setIsChatModalOpen] = useState(false);
   const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 76, y: SCREEN_HEIGHT - 200 })).current;
@@ -848,7 +844,6 @@ export default function App() {
   });
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [quizStatus, setQuizStatus] = useState<QuizStatus>('idle');
-  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
 
   // Download & Onboarding State
   const [hfToken, setHfToken] = useState('');
@@ -932,7 +927,7 @@ export default function App() {
   const chatListRef = useRef<FlatList>(null);
   const modelReadyRef = useRef<boolean>(false);
   const activeRequestIdRef = useRef<string | null>(null);
-  const activeGenerationRef = useRef<{ requestId: string; sessionId: string; messageId: string } | null>(null);
+  const activeGenerationRef = useRef<{ requestId: string; messageId: string } | null>(null);
   const lastChunkUpdateRef = useRef<number>(0);
 
   const panResponder = useRef(
@@ -955,8 +950,7 @@ export default function App() {
     })
   ).current;
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
-  const activeMessages = activeSession?.messages ?? [];
+  const activeMessages = chatMessages;
 
   // --- REAL DYNAMIC LEARNING STREAK ENGINE ---
   const checkAndUpdateDailyStreak = async (markActivity = false): Promise<number> => {
@@ -1021,126 +1015,26 @@ export default function App() {
     }
   };
 
-  const generateScienceAiQuiz = async (chapterId?: number | null) => {
+  const generateScienceAiQuiz = (chapterId?: number | null) => {
     setSelectedOption(null);
     setQuizStatus('idle');
 
     const targetChId = chapterId !== undefined ? chapterId : selectedScienceChapterId;
-    const selectedChapter = targetChId ? getScienceChapterById(targetChId) : null;
-    const chapterNameDisplay = selectedChapter
-      ? `Chapter ${selectedChapter.id}: ${selectedChapter.name} (${selectedChapter.nameNe})`
-      : 'Science (All 19 Chapters)';
-
-    if (!isModelReady && Platform.OS === 'android' && gemmaStatus.path && NativeModules.LLMInferenceModule?.initModel) {
-      try {
-        await NativeModules.LLMInferenceModule.initModel(gemmaStatus.path);
-        setIsModelReady(true);
-        modelReadyRef.current = true;
-      } catch (_) {}
-    }
-
-    if (!isModelReady && !modelReadyRef.current) {
-      const fallbackMcq = getRandomScienceMCQ(targetChId || undefined);
-      if (fallbackMcq) {
-        setCurrentQuiz({
-          subject: `${fallbackMcq.chapterName} (${fallbackMcq.chapterNameNe})`,
-          question: fallbackMcq.question,
-          options: fallbackMcq.options,
-          correctIndex: fallbackMcq.correctIndex,
-          explanation: fallbackMcq.explanation,
-        });
-      }
-      return;
-    }
-
-    setIsGeneratingQuiz(true);
-    const quizRequestId = `sci_quiz_${Date.now()}`;
-    const chapterContext = getScienceChapterContextForGemma(targetChId || undefined);
-
-    const quizPrompt = `<start_of_turn>user
-You are Guru, an expert Nepal Class 10 SEE Science teacher.
-${chapterContext}
-
-Task: Based strictly on the Nepal CDC Class 10 Science curriculum above, create 1 authentic multiple choice question for ${chapterNameDisplay}.
-Rules:
-1. Provide 4 options (A, B, C, D) with exactly one correct answer.
-2. Provide correctIndex (0 for first option, 1 for second, 2 for third, 3 for fourth).
-3. Provide a brief explanation citing scientific principles from the textbook.
-4. Output MUST be ONLY a single raw valid JSON object with NO markdown formatting, NO backticks:
-{"subject":"${chapterNameDisplay}","question":"Question text here?","options":["Option A","Option B","Option C","Option D"],"correctIndex":0,"explanation":"Brief 1-2 sentence explanation."}<end_of_turn>
-<start_of_turn>model
-`;
-
-    const doneSub = DeviceEventEmitter.addListener('LiteRTResponseDone', (event) => {
-      if (event.requestId !== quizRequestId) return;
-      setIsGeneratingQuiz(false);
-      doneSub.remove();
-
-      try {
-        const raw = (event.text || event.fullResponse || '').trim();
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const clean = jsonMatch[0]
-            .replace(/,\s*([}\]])/g, '$1')
-            .replace(/[\u201C\u201D]/g, '"');
-          const parsed = JSON.parse(clean);
-          if (
-            parsed.question &&
-            Array.isArray(parsed.options) &&
-            parsed.options.length >= 4 &&
-            typeof parsed.correctIndex === 'number'
-          ) {
-            setCurrentQuiz({
-              subject: parsed.subject || chapterNameDisplay,
-              question: parsed.question,
-              options: parsed.options.slice(0, 4),
-              correctIndex: Math.min(3, Math.max(0, parsed.correctIndex)),
-              explanation: parsed.explanation || 'Authentic scientific principle from Nepal CDC Class 10 syllabus.',
-            });
-            return;
-          }
-        }
-      } catch (_) {}
-
-      const fallbackMcq = getRandomScienceMCQ(targetChId || undefined);
-      if (fallbackMcq) {
-        setCurrentQuiz({
-          subject: `${fallbackMcq.chapterName} (${fallbackMcq.chapterNameNe})`,
-          question: fallbackMcq.question,
-          options: fallbackMcq.options,
-          correctIndex: fallbackMcq.correctIndex,
-          explanation: fallbackMcq.explanation,
-        });
-      }
-    });
-
-    try {
-      await NativeModules.LLMInferenceModule.generateResponse(
-        quizPrompt,
-        'EN',
-        true,
-        [],
-        quizRequestId,
-        ''
-      );
-    } catch (_) {
-      setIsGeneratingQuiz(false);
-      doneSub.remove();
-      const fallbackMcq = getRandomScienceMCQ(targetChId || undefined);
-      if (fallbackMcq) {
-        setCurrentQuiz({
-          subject: `${fallbackMcq.chapterName} (${fallbackMcq.chapterNameNe})`,
-          question: fallbackMcq.question,
-          options: fallbackMcq.options,
-          correctIndex: fallbackMcq.correctIndex,
-          explanation: fallbackMcq.explanation,
-        });
-      }
+    // Instant 0ms question load from verified Nepal CDC curriculum syllabus memory
+    const instantMcq = getRandomScienceMCQ(targetChId || undefined);
+    if (instantMcq) {
+      setCurrentQuiz({
+        subject: `${instantMcq.chapterName} (${instantMcq.chapterNameNe})`,
+        question: instantMcq.question,
+        options: instantMcq.options,
+        correctIndex: instantMcq.correctIndex,
+        explanation: instantMcq.explanation,
+      });
     }
   };
 
   const pickRandomQuiz = () => {
-    void generateScienceAiQuiz(selectedScienceChapterId);
+    generateScienceAiQuiz(selectedScienceChapterId);
   };
 
   // --- HARDWARE BACK BUTTON HANDLER ---
@@ -1148,10 +1042,6 @@ Rules:
     const onBackPress = () => {
       if (activePdf) {
         setActivePdf(null);
-        return true;
-      }
-      if (isSidebarOpen) {
-        setIsSidebarOpen(false);
         return true;
       }
       if (mediumChooserSubject) {
@@ -1171,7 +1061,7 @@ Rules:
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandler.remove();
-  }, [activePdf, isSidebarOpen, mediumChooserSubject, is2081ModalOpen, isChatModalOpen]);
+  }, [activePdf, mediumChooserSubject, is2081ModalOpen, isChatModalOpen]);
 
   // Multi-Model Download Progress Listener
   useEffect(() => {
@@ -1301,18 +1191,27 @@ Rules:
           }
         }
 
-        let storedSessions = await AsyncStorage.getItem(STORAGE_KEYS.sessions);
-        if (!storedSessions) {
-          storedSessions = await AsyncStorage.getItem(STORAGE_KEYS.legacySessions);
-        }
-        if (storedSessions) {
+        const storedChat = await AsyncStorage.getItem('@guru_single_chat_history');
+        if (storedChat) {
           try {
-            const parsed = JSON.parse(storedSessions);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setSessions(parsed);
-              setActiveSessionId(parsed[0].id);
+            const parsed = JSON.parse(storedChat);
+            if (Array.isArray(parsed)) {
+              setChatMessages(parsed);
             }
           } catch (_) {}
+        } else {
+          let storedSessions = await AsyncStorage.getItem(STORAGE_KEYS.sessions);
+          if (!storedSessions) {
+            storedSessions = await AsyncStorage.getItem(STORAGE_KEYS.legacySessions);
+          }
+          if (storedSessions) {
+            try {
+              const parsed = JSON.parse(storedSessions);
+              if (Array.isArray(parsed) && parsed.length > 0 && Array.isArray(parsed[0].messages)) {
+                setChatMessages(parsed[0].messages);
+              }
+            } catch (_) {}
+          }
         }
 
         if (Platform.OS === 'android' && NativeModules.LLMInferenceModule) {
@@ -1354,12 +1253,12 @@ Rules:
     void bootApp();
   }, []);
 
-  // Persist chat sessions to disk
+  // Persist chat messages to disk
   useEffect(() => {
-    if (sessions.length > 0) {
-      void AsyncStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify(sessions));
+    if (chatMessages.length > 0) {
+      void AsyncStorage.setItem('@guru_single_chat_history', JSON.stringify(chatMessages));
     }
-  }, [sessions]);
+  }, [chatMessages]);
 
   // --- STREAMING LISTENERS ---
   useEffect(() => {
@@ -1375,7 +1274,7 @@ Rules:
           const now = Date.now();
           if (now - lastChunkUpdateRef.current > 70) {
             lastChunkUpdateRef.current = now;
-            updateAssistantMessage(active.sessionId, active.messageId, currentText, true);
+            updateAssistantMessage(active.messageId, currentText, true);
           }
         }
       }
@@ -1388,7 +1287,7 @@ Rules:
         if (!active || event.requestId !== active.requestId) return;
 
         const finalText = String(event.text ?? '');
-        updateAssistantMessage(active.sessionId, active.messageId, finalText, false);
+        updateAssistantMessage(active.messageId, finalText, false);
         setIsGenerating(false);
         activeGenerationRef.current = null;
       }
@@ -1577,19 +1476,12 @@ Rules:
     }
   };
 
-  const updateAssistantMessage = (sessionId: string, messageId: string, text: string, isPending: boolean) => {
+  const updateAssistantMessage = (messageId: string, text: string, isPending: boolean) => {
     const formatted = formatGemmaResponse(text);
-    setSessions((prev) =>
-      prev.map((session) => {
-        if (session.id !== sessionId) return session;
-        return {
-          ...session,
-          updatedAt: Date.now(),
-          messages: session.messages.map((m) =>
-            m.id === messageId ? { ...m, text: isPending ? text : formatted, isPending } : m
-          ),
-        };
-      })
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId ? { ...m, text: isPending ? text : formatted, isPending } : m
+      )
     );
   };
 
@@ -1844,28 +1736,11 @@ Rules:
     }
   };
 
-  // --- CHAT SESSION MANAGEMENT ---
-  const createNewChat = () => {
-    const newId = Math.random().toString(36).slice(2, 10);
-    const newSession: ChatSession = {
-      id: newId,
-      title: 'New Study Chat',
-      messages: [],
-      updatedAt: Date.now(),
-    };
-    setSessions((prev) => [newSession, ...prev]);
-    setActiveSessionId(newId);
-    setIsSidebarOpen(false);
-  };
-
-  const deleteChat = (sessionId: string) => {
-    setSessions((prev) => {
-      const remaining = prev.filter((s) => s.id !== sessionId);
-      if (activeSessionId === sessionId) {
-        setActiveSessionId(remaining[0]?.id || null);
-      }
-      return remaining;
-    });
+  // --- CHAT MANAGEMENT (SINGLE CONTINUOUS CONVERSATION) ---
+  const handleClearChat = async () => {
+    setChatMessages([]);
+    await AsyncStorage.removeItem('@guru_single_chat_history');
+    showToast('Chat cleared');
   };
 
   // --- ATTACHMENT HANDLERS (CAMERA & STORAGE IMAGES) ---
@@ -1975,20 +1850,6 @@ Rules:
     const textToSend = (forcedPrompt || prompt).trim();
     if (!textToSend && !attachedFileContent && !attachedImageUri) return;
 
-    let currentSessionId = activeSessionId;
-    if (!currentSessionId || !sessions.find((s) => s.id === currentSessionId)) {
-      const newId = Math.random().toString(36).slice(2, 10);
-      const newSession: ChatSession = {
-        id: newId,
-        title: textToSend.slice(0, 24) || 'Study Question',
-        messages: [],
-        updatedAt: Date.now(),
-      };
-      setSessions((prev) => [newSession, ...prev]);
-      setActiveSessionId(newId);
-      currentSessionId = newId;
-    }
-
     const userMessageId = Math.random().toString(36).slice(2, 10);
     const assistantMessageId = Math.random().toString(36).slice(2, 10);
     const requestId = Math.random().toString(36).slice(2, 10);
@@ -2008,9 +1869,7 @@ Rules:
       isPending: true,
     };
 
-    setSessions((prev) =>
-      prev.map((s) => (s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg, botMsg] } : s))
-    );
+    setChatMessages((prev) => [...prev, userMsg, botMsg]);
 
     const imageToSend = attachedImageUri;
     const fileContentToSend = attachedFileContent;
@@ -2024,13 +1883,12 @@ Rules:
 
     activeGenerationRef.current = {
       requestId,
-      sessionId: currentSessionId,
       messageId: assistantMessageId,
     };
 
     if (Platform.OS === 'android' && NativeModules.LLMInferenceModule) {
       try {
-        const rawHistory = (sessions.find((s) => s.id === currentSessionId)?.messages || [])
+        const rawHistory = chatMessages
           .filter((m) => m.id !== assistantMessageId && m.text !== 'Analyzing...' && m.text.trim().length > 0);
         const historyForInference = rawHistory
           .slice(-6)
@@ -2068,7 +1926,7 @@ Rules:
           qLower.includes('sphere') ||
           qLower.includes('theorem') ||
           qLower.includes('trigonometry') ||
-          qLower.includes('math')
+          qLower.includes('equation')
         ) {
           matchedSub = 'math';
         } else if (
@@ -2080,6 +1938,7 @@ Rules:
         ) {
           matchedSub = 'computer';
         } else if (
+          qLower.includes('samajik') ||
           qLower.includes('constitution') ||
           qLower.includes('saarc') ||
           qLower.includes('geography') ||
@@ -2100,7 +1959,6 @@ Rules:
         console.warn('Native inference error:', err);
         // If native inference was interrupted or model is re-allocating memory, provide a warm fallback
         updateAssistantMessage(
-          currentSessionId,
           assistantMessageId,
           "I am ready to help! Please ask your question again or send a photo from your textbook.",
           false
@@ -2109,7 +1967,6 @@ Rules:
       }
     } else {
       updateAssistantMessage(
-        currentSessionId,
         assistantMessageId,
         'Offline AI Brain is only available on native Android devices.',
         false
@@ -2718,81 +2575,72 @@ Rules:
                 </Text>
               </View>
 
-              {isGeneratingQuiz ? (
-                <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 10 }}>
-                  <ActivityIndicator size="small" color="#ffffff" />
-                  <Text style={{ fontSize: 13.5, color: '#a1a1aa' }}>Guru AI is generating a fresh Science exam MCQ...</Text>
+              <Text style={styles.quizQuestionText}>{currentQuiz.question}</Text>
+
+              <View style={styles.quizOptionsGrid}>
+                <View style={styles.quizRowTwo}>
+                  {currentQuiz.options.slice(0, 2).map((opt, idx) => {
+                    const isSelected = selectedOption === idx;
+                    const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
+                    const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
+                    return (
+                      <TouchableOpacity
+                        key={`${opt}-${idx}`}
+                        style={[
+                          styles.quizOptionPill,
+                          isSelected && styles.quizOptionPillSelected,
+                          isCorrect && styles.quizOptionPillCorrect,
+                          isWrong && styles.quizOptionPillWrong,
+                        ]}
+                        onPress={() => handleQuizAnswer(idx)}
+                      >
+                        <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
+                          {opt}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-              ) : (
-                <>
-                  <Text style={styles.quizQuestionText}>{currentQuiz.question}</Text>
+                <View style={styles.quizRowTwo}>
+                  {currentQuiz.options.slice(2, 4).map((opt, idx) => {
+                    const realIdx = idx + 2;
+                    const isSelected = selectedOption === realIdx;
+                    const isCorrect = quizStatus !== 'idle' && realIdx === currentQuiz.correctIndex;
+                    const isWrong = quizStatus === 'wrong' && isSelected && realIdx !== currentQuiz.correctIndex;
+                    return (
+                      <TouchableOpacity
+                        key={`${opt}-${realIdx}`}
+                        style={[
+                          styles.quizOptionPill,
+                          isSelected && styles.quizOptionPillSelected,
+                          isCorrect && styles.quizOptionPillCorrect,
+                          isWrong && styles.quizOptionPillWrong,
+                        ]}
+                        onPress={() => handleQuizAnswer(realIdx)}
+                      >
+                        <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
+                          {opt}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
 
-                  <View style={styles.quizOptionsGrid}>
-                    <View style={styles.quizRowTwo}>
-                      {currentQuiz.options.slice(0, 2).map((opt, idx) => {
-                        const isSelected = selectedOption === idx;
-                        const isCorrect = quizStatus !== 'idle' && idx === currentQuiz.correctIndex;
-                        const isWrong = quizStatus === 'wrong' && isSelected && idx !== currentQuiz.correctIndex;
-                        return (
-                          <TouchableOpacity
-                            key={`${opt}-${idx}`}
-                            style={[
-                              styles.quizOptionPill,
-                              isSelected && styles.quizOptionPillSelected,
-                              isCorrect && styles.quizOptionPillCorrect,
-                              isWrong && styles.quizOptionPillWrong,
-                            ]}
-                            onPress={() => handleQuizAnswer(idx)}
-                          >
-                            <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
-                              {opt}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <View style={styles.quizRowTwo}>
-                      {currentQuiz.options.slice(2, 4).map((opt, idx) => {
-                        const realIdx = idx + 2;
-                        const isSelected = selectedOption === realIdx;
-                        const isCorrect = quizStatus !== 'idle' && realIdx === currentQuiz.correctIndex;
-                        const isWrong = quizStatus === 'wrong' && isSelected && realIdx !== currentQuiz.correctIndex;
-                        return (
-                          <TouchableOpacity
-                            key={`${opt}-${realIdx}`}
-                            style={[
-                              styles.quizOptionPill,
-                              isSelected && styles.quizOptionPillSelected,
-                              isCorrect && styles.quizOptionPillCorrect,
-                              isWrong && styles.quizOptionPillWrong,
-                            ]}
-                            onPress={() => handleQuizAnswer(realIdx)}
-                          >
-                            <Text style={[styles.quizOptionText, (isCorrect || isSelected) && styles.quizOptionTextActive]} numberOfLines={2}>
-                              {opt}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-
-                  {quizStatus !== 'idle' && (
-                    <View style={[styles.feedbackBox, quizStatus === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong]}>
-                      <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Review Concept:'}</Text>
-                      <Text style={styles.feedbackExplain}>{currentQuiz.explanation}</Text>
-                    </View>
-                  )}
-                </>
+              {quizStatus !== 'idle' && (
+                <View style={[styles.feedbackBox, quizStatus === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong]}>
+                  <Text style={styles.feedbackTitle}>{quizStatus === 'correct' ? 'Correct!' : 'Review Concept:'}</Text>
+                  <Text style={styles.feedbackExplain}>{currentQuiz.explanation}</Text>
+                </View>
               )}
 
               <TouchableOpacity
-                style={[styles.newQuizButton, isGeneratingQuiz && { opacity: 0.6 }]}
+                style={styles.newQuizButton}
                 onPress={pickRandomQuiz}
-                disabled={isGeneratingQuiz}
+                activeOpacity={0.7}
               >
                 <Sparkles size={14} color="#ffffff" style={{ marginRight: 6 }} />
-                <Text style={styles.newQuizButtonText}>{isGeneratingQuiz ? 'Generating AI Science MCQ...' : 'Generate Next'}</Text>
+                <Text style={styles.newQuizButtonText}>Generate Next</Text>
               </TouchableOpacity>
             </View>
 
@@ -2826,296 +2674,6 @@ Rules:
         </ScrollView>
       )}
 
-      {/* TAB 2: LEARN (DEDICATED MULTI-TURN AI CHAT HUB WITH SIDEBAR & MULTIMODAL ATTACHMENTS) */}
-      {activeTab === 'learn' && (
-        <View style={styles.learnTabContainer}>
-          {/* Chat Top Header with Sidebar Menu Button */}
-          <View style={styles.chatHubHeader}>
-            <TouchableOpacity style={styles.sidebarToggleButton} onPress={() => setIsSidebarOpen(true)}>
-              <Menu size={19} color="#ffffff" />
-            </TouchableOpacity>
-
-            <View style={styles.activeChatTitleBox}>
-              <Text style={styles.activeChatTitleText} numberOfLines={1}>
-                {activeSession?.title || 'Study Chat'}
-              </Text>
-            </View>
-
-            <TouchableOpacity style={styles.newChatHeaderButton} onPress={createNewChat}>
-              <Plus size={17} color="#000000" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Chat Messages Stream with 10/10 Human Math & Markdown Typesetting */}
-          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            {activeMessages.length === 0 ? (
-              <View style={styles.chatEmptyView}>
-                <Image source={logoSource} style={styles.chatEmptyLogo} resizeMode="contain" />
-                <Text style={styles.chatEmptyTitle}>How can I help you learn?</Text>
-                <Text style={styles.chatEmptySub}>
-                  Ask questions across all subjects, formulas, and school curricula. You can type, speak with voice, or snap a photo of any problem.
-                </Text>
-              </View>
-            ) : (
-              <FlatList
-                ref={chatListRef}
-                data={activeMessages}
-                keyExtractor={(m) => m.id}
-                contentContainerStyle={styles.chatMessageList}
-                onContentSizeChange={() => chatListRef.current?.scrollToEnd({ animated: true })}
-                renderItem={({ item }) => (
-                  <View style={item.isUser ? styles.userMsgRow : styles.botMsgRow}>
-                    {!item.isUser && (
-                      <View style={styles.botAvatarBox}>
-                        <Image source={logoSource} style={styles.botAvatarImage} resizeMode="contain" />
-                      </View>
-                    )}
-                    <View style={item.isUser ? styles.userBubble : styles.botBubble}>
-                      {item.attachmentImageUri && (
-                        <Image source={{ uri: item.attachmentImageUri }} style={styles.chatAttachedPreviewImage} />
-                      )}
-                      {item.attachmentName && (
-                        <View style={styles.chatAttachmentPill}>
-                          <Text style={styles.chatAttachmentText}>{item.attachmentName}</Text>
-                        </View>
-                      )}
-                      {item.isPending ? (
-                        item.text ? (
-                          <View>
-                            <MathMarkdownRenderer content={item.text} isUser={false} />
-                            <View style={[styles.loadingBubbleRow, { marginTop: 6 }]}>
-                              <ActivityIndicator size="small" color="#38bdf8" />
-                              <Text style={styles.loadingBubbleText}>Generating...</Text>
-                            </View>
-                          </View>
-                        ) : (
-                          <View style={styles.loadingBubbleRow}>
-                            <ActivityIndicator size="small" color="#38bdf8" />
-                            <Text style={styles.loadingBubbleText}>Guru is solving & thinking...</Text>
-                          </View>
-                        )
-                      ) : (
-                        <View>
-                          <MathMarkdownRenderer content={item.text} isUser={item.isUser} />
-                          {!item.isUser && (
-                            <View style={styles.botActionButtonsRow}>
-                              <TouchableOpacity
-                                style={styles.chatActionButton}
-                                onPress={() => toggleSpeech(item.id, item.text)}
-                              >
-                                {playingMessageId === item.id ? (
-                                  <VolumeX size={13} color="#ffffff" style={{ marginRight: 4 }} />
-                                ) : (
-                                  <Volume2 size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
-                                )}
-                                <Text style={[styles.chatActionButtonText, playingMessageId === item.id && { color: '#ffffff' }]}>
-                                  {playingMessageId === item.id ? 'Stop' : 'Listen'}
-                                </Text>
-                              </TouchableOpacity>
-
-                              <TouchableOpacity
-                                style={styles.chatActionButton}
-                                onPress={() => copyMessageToClipboard(item.text)}
-                              >
-                                <ClipboardCopy size={13} color="#a1a1aa" style={{ marginRight: 4 }} />
-                                <Text style={styles.chatActionButtonText}>Copy</Text>
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                )}
-              />
-            )}
-
-            {/* Thumbnail Preview for Attached Image */}
-            {attachedImageUri && (
-              <View style={styles.attachedImageThumbnailContainer}>
-                <Image source={{ uri: attachedImageUri }} style={styles.attachedThumbImage} />
-                <Text style={styles.attachedThumbText} numberOfLines={1}>Attached Image</Text>
-                <TouchableOpacity onPress={() => setAttachedImageUri(null)} style={{ padding: 4 }}>
-                  <X size={16} color="#ffffff" />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Stop Generating Banner Pill */}
-            {isGenerating && (
-              <View style={styles.generatingStopContainer}>
-                <TouchableOpacity
-                  style={styles.generatingStopPill}
-                  onPress={handleStopGeneration}
-                  activeOpacity={0.8}
-                >
-                  <Square size={11} color="#ef4444" fill="#ef4444" style={{ marginRight: 6 }} />
-                  <Text style={styles.generatingStopText}>Stop generating</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Chat Input Bar */}
-            <View style={styles.chatInputBarContainer}>
-              <View style={styles.chatInputPillWrapper}>
-                {/* Plus (+) Button for Upload & Camera options */}
-                <TouchableOpacity
-                  style={styles.chatAttachIconButton}
-                  onPress={() => setShowAttachModal(true)}
-                >
-                  <Plus size={19} color="#ffffff" />
-                </TouchableOpacity>
-
-                <TextInput
-                  style={styles.chatPillInput}
-                  value={prompt}
-                  onChangeText={setPrompt}
-                  placeholder={isListening ? 'Listening to voice...' : isGenerating ? 'Guru is thinking...' : 'Ask Guru anything or snap a photo...'}
-                  placeholderTextColor={isListening ? '#38bdf8' : '#71717a'}
-                  multiline
-                />
-
-                {isGenerating ? (
-                  <TouchableOpacity
-                    style={styles.chatStopIconButton}
-                    onPress={handleStopGeneration}
-                  >
-                    <Square size={12} color="#ffffff" fill="#ffffff" />
-                  </TouchableOpacity>
-                ) : (
-                  <>
-                    {/* Voice STT Record Button */}
-                    <TouchableOpacity
-                      style={[styles.chatMicIconButton, isListening && styles.chatMicIconButtonActive]}
-                      onPress={isListening ? stopVoiceRecording : startVoiceRecording}
-                    >
-                      {isListening ? (
-                        <MicOff size={18} color="#ef4444" />
-                      ) : (
-                        <Mic size={18} color="#a1a1aa" />
-                      )}
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.chatSendIconButton}
-                      disabled={!prompt.trim() && !attachedFileContent && !attachedImageUri}
-                      onPress={() => sendPrompt()}
-                    >
-                      <Send size={17} color={prompt.trim() || attachedFileContent || attachedImageUri ? '#ffffff' : '#52525b'} />
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-
-          {/* ATTACHMENT ACTION SHEET (In-View Overlay — Zero Crash) */}
-          {showAttachModal && (
-            <View style={styles.attachModalBackdrop}>
-              <TouchableOpacity
-                style={StyleSheet.absoluteFill}
-                activeOpacity={1}
-                onPress={() => setShowAttachModal(false)}
-              />
-              <View style={styles.attachModalSheet}>
-                <Text style={styles.attachModalTitle}>Add attachment</Text>
-
-                <TouchableOpacity
-                  style={styles.attachOptionRow}
-                  onPress={handlePickCamera}
-                >
-                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
-                    <Camera size={20} color="#ffffff" />
-                  </View>
-                  <View style={styles.attachOptionTextGroup}>
-                    <Text style={styles.attachOptionLabel}>Take photo</Text>
-                    <Text style={styles.attachOptionSub}>Attach image from camera for OCR</Text>
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.attachOptionRow}
-                  onPress={handlePickGallery}
-                >
-                  <View style={[styles.attachOptionIcon, { backgroundColor: '#27272a' }]}>
-                    <ImageIcon size={20} color="#ffffff" />
-                  </View>
-                  <View style={styles.attachOptionTextGroup}>
-                    <Text style={styles.attachOptionLabel}>Upload from gallery</Text>
-                    <Text style={styles.attachOptionSub}>Attach question photo from device</Text>
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.attachCancelButton} onPress={() => setShowAttachModal(false)}>
-                  <Text style={styles.attachCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* SLIDE-OUT SIDEBAR DRAWER FOR CHAT SESSIONS */}
-          {isSidebarOpen && (
-            <View style={styles.sidebarOverlay}>
-              <TouchableOpacity
-                style={styles.sidebarBackdrop}
-                activeOpacity={1}
-                onPress={() => setIsSidebarOpen(false)}
-              />
-              <View style={styles.sidebarContent}>
-                <View style={styles.sidebarHeader}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <MessageSquare size={17} color="#ffffff" style={{ marginRight: 7 }} />
-                    <Text style={styles.sidebarTitle}>Study Chats</Text>
-                  </View>
-                  <TouchableOpacity onPress={() => setIsSidebarOpen(false)} style={{ padding: 4 }}>
-                    <PanelLeftClose size={19} color="#a1a1aa" />
-                  </TouchableOpacity>
-                </View>
-
-                <TouchableOpacity style={styles.sidebarNewChatButton} onPress={createNewChat}>
-                  <Plus size={15} color="#000000" style={{ marginRight: 6 }} />
-                  <Text style={styles.sidebarNewChatText}>New Study Chat</Text>
-                </TouchableOpacity>
-
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
-                  {sessions.map((s) => {
-                    const isActive = (activeSessionId || sessions[0]?.id) === s.id;
-                    return (
-                      <TouchableOpacity
-                        key={s.id}
-                        style={[styles.sidebarChatItem, isActive && styles.sidebarChatItemActive]}
-                        onPress={() => {
-                          setActiveSessionId(s.id);
-                          setIsSidebarOpen(false);
-                        }}
-                      >
-                        <MessageSquare size={14} color={isActive ? '#000000' : '#a1a1aa'} style={{ marginRight: 9 }} />
-                        <Text
-                          style={[styles.sidebarChatTitle, isActive && styles.sidebarChatTitleActive]}
-                          numberOfLines={1}
-                        >
-                          {s.title}
-                        </Text>
-                        {sessions.length > 1 && (
-                          <TouchableOpacity
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              deleteChat(s.id);
-                            }}
-                            style={{ padding: 4, marginLeft: 6 }}
-                          >
-                            <Trash2 size={13} color={isActive ? '#000000' : '#71717a'} />
-                          </TouchableOpacity>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            </View>
-          )}
-        </View>
-      )}
 
       {/* TAB 3: EXAM REVISION & PAST PAPERS */}
       {activeTab === 'revision' && (
@@ -3490,27 +3048,25 @@ Rules:
       )}
 
       {/* FREE MOVABLE DRAGGABLE FLOATING GURU AI SPHERE (ALWAYS ACTIVE & ACCESSIBLE ACROSS TABS & PDF VIEWER) */}
-      {activeTab !== 'learn' && (
-        <Animated.View
-          style={[
-            styles.floatingBotMovable,
-            {
-              transform: [{ translateX: pan.x }, { translateY: pan.y }],
-              zIndex: 99999,
-              elevation: 25,
-            },
-          ]}
-          {...panResponder.panHandlers}
+      <Animated.View
+        style={[
+          styles.floatingBotMovable,
+          {
+            transform: [{ translateX: pan.x }, { translateY: pan.y }],
+            zIndex: 99999,
+            elevation: 25,
+          },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <TouchableOpacity
+          style={styles.floatingBotInner}
+          activeOpacity={0.85}
+          onPress={handleOpenAIChat}
         >
-          <TouchableOpacity
-            style={styles.floatingBotInner}
-            activeOpacity={0.85}
-            onPress={handleOpenAIChat}
-          >
-            <Image source={logoSource} style={styles.floatingBotLogo} resizeMode="contain" />
-          </TouchableOpacity>
-        </Animated.View>
-      )}
+          <Image source={logoSource} style={styles.floatingBotLogo} resizeMode="contain" />
+        </TouchableOpacity>
+      </Animated.View>
 
       {/* BOTTOM TAB BAR */}
       <View style={styles.bottomTabBar}>
@@ -3895,13 +3451,21 @@ Rules:
               <X size={22} color="#ffffff" />
             </TouchableOpacity>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Image source={logoSource} style={styles.chatModalLogoIcon} resizeMode="contain" />
-              <Text style={styles.chatModalHeaderTitle}>Guru AI Assistant</Text>
+            <View style={{ alignItems: 'center' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Image source={logoSource} style={styles.chatModalLogoIcon} resizeMode="contain" />
+                <Text style={styles.chatModalHeaderTitle}>Guru AI Tutor</Text>
+              </View>
+              <Text style={{ fontSize: 10.5, color: '#71717a', fontWeight: '500', marginTop: 1 }}>Class 10 Offline Brain</Text>
             </View>
 
-            <TouchableOpacity style={styles.chatBotIconHeader} onPress={createNewChat}>
-              <Plus size={20} color="#ffffff" />
+            <TouchableOpacity
+              style={styles.chatBotIconHeader}
+              onPress={handleClearChat}
+              activeOpacity={0.7}
+              accessibilityLabel="Clear Chat"
+            >
+              <RotateCcw size={18} color="#ffffff" />
             </TouchableOpacity>
           </View>
 
@@ -4699,117 +4263,7 @@ const styles = StyleSheet.create({
     color: '#71717a',
     lineHeight: 14,
   },
-  // LEARN TAB
-  learnTabContainer: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  chatHubHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#18181b',
-    backgroundColor: '#09090b',
-  },
-  sidebarToggleButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: '#18181b',
-    borderWidth: 1,
-    borderColor: '#27272a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  activeChatTitleBox: {
-    flex: 1,
-    marginHorizontal: 10,
-  },
-  activeChatTitleText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#ffffff',
-    textAlign: 'center',
-  },
-  newChatHeaderButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // SLIDE-OUT SIDEBAR DRAWER
-  sidebarOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 100,
-    flexDirection: 'row',
-  },
-  sidebarBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-  },
-  sidebarContent: {
-    width: '75%',
-    backgroundColor: '#0e0e11',
-    borderRightWidth: 1,
-    borderRightColor: '#27272a',
-    padding: 16,
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 12 : 20,
-  },
-  sidebarHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  sidebarTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  sidebarNewChatButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-    borderRadius: 10,
-    paddingVertical: 9,
-    marginBottom: 14,
-  },
-  sidebarNewChatText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  sidebarChatItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#141418',
-    borderWidth: 1,
-    borderColor: '#24242a',
-    borderRadius: 9,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    marginBottom: 7,
-  },
-  sidebarChatItemActive: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
-  },
-  sidebarChatTitle: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#a1a1aa',
-  },
-  sidebarChatTitleActive: {
-    color: '#000000',
-    fontWeight: '700',
-  },
+
   // REVISION & MOCK PRACTICE TAB
   mockExamBannerCard: {
     flexDirection: 'row',
