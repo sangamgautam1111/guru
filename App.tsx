@@ -527,11 +527,10 @@ const SUBJECTS_DATA: SubjectItem[] = [
     nameNe: 'सामाजिक अध्ययन',
     unitsCount: 9,
     pagesCount: 270,
-    hasDualMedium: true,
-    englishAssetPdf: 'grade10/Social/0010_SocialStudiesGrade10.pdf',
+    hasDualMedium: false,
     nepaliAssetPdf: 'grade10/maths/social_studies/pdf/Class-10-Book-Social-Studies-NE-2080_1760939605.pdf',
-    englishTitle: 'Class 10 Social Studies (English Medium)',
-    nepaliTitle: 'कक्षा १० सामाजिक अध्ययन (नेपाली माध्यम)',
+    englishTitle: 'कक्षा १० सामाजिक अध्ययन',
+    nepaliTitle: 'कक्षा १० सामाजिक अध्ययन',
   },
   {
     id: 'nepali',
@@ -1722,10 +1721,13 @@ export default function App() {
   };
 
   const handleSubjectClick = (subject: SubjectItem) => {
-    if (subject.hasDualMedium) {
+    // Only Science, Compulsory Math, and Optional Math have dual medium (English & Nepali)
+    if (subject.id === 'science' || subject.id === 'math' || subject.id === 'opt_math') {
       setMediumChooserSubject(subject);
     } else {
-      const targetPdf = subject.id === 'nepali' ? subject.nepaliAssetPdf : subject.englishAssetPdf;
+      const targetPdf = (subject.id === 'nepali' || subject.id === 'social')
+        ? (subject.nepaliAssetPdf || subject.englishAssetPdf)
+        : (subject.englishAssetPdf || subject.nepaliAssetPdf);
       openInAppPdf(targetPdf, subject.name);
     }
   };
