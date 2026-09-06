@@ -3,14 +3,29 @@
 ### The Offline AI Tutor for Low-Connectivity Areas
 
 [![Shipathon 2026](https://img.shields.io/badge/Shipathon-2026-blue?style=flat-square)](https://www.shipathon.com)
-[![RevenueCat](https://img.shields.io/badge/RevenueCat-Next_Gen_Track-ff5a5f?style=flat-square&logo=revenuecat)](https://github.com/sangamgautam1111/guru/blob/master/App.tsx#L1986-L2075)
+[![RevenueCat](https://img.shields.io/badge/RevenueCat-Next_Gen_Track-ff5a5f?style=flat-square&logo=revenuecat)](https://github.com/sangamgautam1111/guru/blob/master/src/services/RevenueCatService.ts)
 [![Status](https://img.shields.io/badge/Status-Shipped-brightgreen?style=flat-square)](https://github.com/sangamgautam1111/guru/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 ![Guru Classroom Pilot in Nepal](assets/classroom_pilot.jpg)
 *Grade 10 students in rural Nepal learning with Guru offline AI in their classroom.*
 
-An offline AI tutor designed to help students learn concepts with an AI model developed by Google DeepMind. We implemented a JNI–Kotlin bridge to run a quantized Gemma model directly on local hardware, whether it’s a GPU or CPU.
+## The Story Behind Guru
+
+One night, I was studying for my SEE exams and the power went out. No light, no internet — I couldn't study for the rest of the night.
+
+It got me thinking — what if there was an AI tutor that could teach you even when the internet is gone? UNICEF says over a billion students worldwide don't have internet access, with the highest numbers in South Asia and West and Central Africa.
+
+I decided to stop thinking about it globally and focus on what I know — Nepal. I went to Kavre, my village, and talked to a student named Milan. I asked him what his biggest problem with studying was. He said:
+
+> "Whenever I have doubts in my studies, it is difficult to find answers by searching the internet or using AI, because internet access is limited in our village."
+
+![Milan carrying his study materials in Kavre, Nepal](https://raw.githubusercontent.com/sangamgautam1111/guru/master/assets/student_milan.jpg)
+*Milan carrying his study materials in Kavre, Nepal.*
+
+That gave me the clarity I needed. I'm 14, and I knew exactly what had to be built. I picked Google's Gemma 4 E2B model and ran it through LiteRT — even on devices with low RAM, the kind of phones students in these areas actually have.
+
+That's how Guru started.
 
 ## Features
 
@@ -40,17 +55,49 @@ Download the latest release APK directly for Android:
 4. **Grant permissions**: Allow camera and microphone access so you can take photos of textbook questions and speak into the mic.
 5. **Learn completely offline**: Turn on Airplane mode if you'd like. Once downloaded, asking questions, photo solving, voice recognition, and all books work 100% offline without any internet.
 
-## RevenueCat Integration
+## RevenueCat Integration (Guru Dakshina)
 
-Guru is built for the **RevenueCat Shipathon 2026 (Next Gen Track)**. I integrated RevenueCat to handle **Guru Dakshina** — our community sponsorship system where supporters can sponsor offline AI kits for rural students.
+Guru is built for the **RevenueCat Shipathon 2026 (Next Gen Track)**.
 
-[![View RevenueCat Code](https://img.shields.io/badge/View_RevenueCat_Code-App.tsx_(Lines_1986--2075)-ff5a5f?style=for-the-badge&logo=revenuecat)](https://github.com/sangamgautam1111/guru/blob/master/App.tsx#L1986-L2075)
+Instead of putting a paywall in front of students who can barely afford school books, I built **Guru Dakshina**. It lets community members, alumni, and supporters sponsor offline study kits for students who need them.
 
-Click the button above to jump directly to the exact implementation in `App.tsx` (lines 1986–2075):
-- SDK initialization (`Purchases.configure`)
-- Checking active entitlements and listening for updates
-- Loading offerings and processing sponsorship packages
-- Restoring purchases
+[![View RevenueCat Code](https://img.shields.io/badge/View_RevenueCat_Code-src/services/RevenueCatService.ts-ff5a5f?style=for-the-badge&logo=revenuecat)](https://github.com/sangamgautam1111/guru/blob/master/src/services/RevenueCatService.ts)
+
+You can check out the clean code in [`src/services/RevenueCatService.ts`](src/services/RevenueCatService.ts), [`src/hooks/useDakshina.ts`](src/hooks/useDakshina.ts), and [`src/components/GuruDakshinaHub.tsx`](src/components/GuruDakshinaHub.tsx).
+
+### The $1 Student Kit (Parent's Phone — Zero Internet)
+In villages across Nepal, students don't own laptops or Wi-Fi routers. When their parents come home from work in the evening, the students borrow the parent's phone to study.
+
+Each $1 sponsorship funds the full setup on a parent's phone:
+- All official Class 10 CDC textbooks (Science, Math, Social, English, Nepali, Opt Math, Computer Science)
+- All 7 provinces SEE 2081 board question papers and answers
+- Chapter-by-chapter practice MCQs
+- The Gemma 2B AI tutor running right on the phone
+
+Supporters can sponsor 1 student or use the counter to sponsor 3, 5, 10, or more students ($1 per student).
+
+### How I Fixed the Release Build Crash with RevenueCat
+When I built the release APK (`assembleRelease`), the app suddenly crashed right after opening with a popup: *"Wrong API Key... The app will close now to protect the security of test purchases."*
+
+Here is why that happened and how I fixed it:
+
+1. **The fix (`goog_` key)**: RevenueCat's Android SDK does not allow test keys (`test_...`) in release builds. It does this on purpose so nobody ships a test store to real users. In [`src/services/RevenueCatService.ts`](src/services/RevenueCatService.ts), I replaced the test key with my real Google Play key:
+   ```typescript
+   const REVENUECAT_API_KEY = 'goog_RmztSEyguCfzJskBlCWHaEUgQAL';
+   ```
+   Because the key starts with `goog_`, RevenueCat recognizes it as a valid production key. The app boots cleanly without any warning or shutdown.
+
+2. **Airplane mode check**: If you turn off your Wi-Fi and mobile data, the app doesn't freeze or throw an error. It simply tells you that you are offline and lets you keep studying.
+
+3. **Fallback for sideloaded testing**: When testing this APK directly without Google Play Billing connected, the app catches that gracefully. It lets you test the sponsorship flow, updates your sponsor count in phone storage, and unlocks your supporter badge.
+
+4. **Supporter badges**: When you sponsor students, you get a clean vector icon badge right on top:
+   - 1–2 students: Study Supporter
+   - 3–9 students: Classroom Patron
+   - 10+ students: Vidya Guru Benefactor
+   I used clean Lucide line icons so it looks sharp and well-built.
+
+5. **Customer Attributes**: Every time someone sponsors students, the app saves their tier and total students sponsored directly to RevenueCat customer attributes.
 
 ## Hardware Performance Benchmark
 
@@ -97,5 +144,5 @@ To build and run Guru locally from source:
 
 ---
 
-Made with ❤️ for Nepal students!
+Made with dedication for students across Nepal.
 

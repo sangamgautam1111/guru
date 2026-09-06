@@ -53,10 +53,10 @@ The typed TypeScript bridge that talks to our native Kotlin `LLMInferenceModule`
 - Requires zero backend servers or user accounts to function.
 
 ### 7. RevenueCat Dakshina & Patronage Subsystem
-- Integrates `react-native-purchases` for community patronage.
-- Entitlement: `patron`, product: `guru_sponsor_monthly`, offering: `default`, package: `$rc_monthly`.
-- Provides an elegant single-screen sponsorship modal with quick student count chips (`1, 3, 5, 10, 20`), live dollar calculations, and a restore purchases handler.
-- 100% compliant with Google Play billing and RevenueCat Next-Gen developer standards.
+- **Service layer (`src/services/RevenueCatService.ts`)**: Handles SDK setup with my Google Play key (`goog_RmztSEyguCfzJskBlCWHaEUgQAL`), checks internet before attempting payments, and saves donor info to customer attributes.
+- **Custom React Hook (`src/hooks/useDakshina.ts`)**: Keeps track of how many students you sponsored in phone storage (`AsyncStorage`) and calculates your supporter badge (`Study Supporter`, `Classroom Patron`, `Vidya Guru Benefactor`).
+- **Sponsorship Hub & Badges (`src/components/GuruDakshinaHub.tsx` & `SupporterBadge.tsx`)**: The UI for sponsoring the $1 Student Kit (Parent's Phone — Zero Internet), with student count selectors and clean Lucide line icons.
+- **Release build safety**: Works without crashing on release builds, handles Airplane mode gracefully, and supports local test flows when Google Play Billing is unavailable.
 
 ---
 

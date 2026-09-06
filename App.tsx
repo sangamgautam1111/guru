@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -91,8 +91,10 @@ import {
   ZoomOut,
   MapPin,
 } from 'lucide-react-native';
-import Purchases, { PurchasesOffering, PurchasesPackage, CustomerInfo } from 'react-native-purchases';
 import { MathMarkdownRenderer } from './MathMarkdownRenderer';
+import { useDakshina } from './src/hooks/useDakshina';
+import { GuruDakshinaHub } from './src/components/GuruDakshinaHub';
+import { SupporterBadge } from './src/components/SupporterBadge';
 import {
   ScienceAtomIllustration,
   MathPyramidIllustration,
@@ -869,14 +871,24 @@ export default function App() {
   // Medium Selection Popup
   const [mediumChooserSubject, setMediumChooserSubject] = useState<SubjectItem | null>(null);
 
-  // RevenueCat Donation & In-App Purchases State
-  const [offerings, setOfferings] = useState<PurchasesOffering | null>(null);
-  const [isPurchasing, setIsPurchasing] = useState(false);
-  const [isPatron, setIsPatron] = useState(false);
-  const [sponsorCount, setSponsorCount] = useState<number>(10);
-  const [lifetimeSponsorCount, setLifetimeSponsorCount] = useState<number>(0);
-  const [isPaywallModalOpen, setIsPaywallModalOpen] = useState(false);
-  const [donationSuccessMsg, setDonationSuccessMsg] = useState<string | null>(null);
+  const showToast = useCallback((msg: string) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
+    }
+  }, []);
+
+  // Guru Dakshina Subsystem (Managed via useDakshina hook and RevenueCatService)
+  const {
+    isPatron,
+    badge: supporterBadge,
+    sponsorCount,
+    setSponsorCount,
+    lifetimeSponsorCount,
+    isPurchasing,
+    donationSuccessMsg,
+    handleSponsor,
+    handleRestore,
+  } = useDakshina(showToast);
 
   // 2081 Past Papers Province Selector Modal
   const [is2081ModalOpen, setIs2081ModalOpen] = useState(false);
@@ -1182,14 +1194,6 @@ export default function App() {
           setScreen('onboarding');
         }
 
-        const storedLifetime = await AsyncStorage.getItem('@guru_lifetime_sponsor_count');
-        if (storedLifetime) {
-          const parsedLifetime = parseInt(storedLifetime, 10);
-          if (!isNaN(parsedLifetime) && parsedLifetime > 0) {
-            setLifetimeSponsorCount(parsedLifetime);
-          }
-        }
-
         const storedChat = await AsyncStorage.getItem('@guru_single_chat_history');
         if (storedChat) {
           try {
@@ -1227,11 +1231,6 @@ export default function App() {
           } catch (_) {}
         }
 
-        // Restore Guru Pro subscription status & daily MCQ quota
-        const storedPatron = await AsyncStorage.getItem('@guru_is_patron');
-        if (storedPatron === 'true') {
-          setIsPatron(true);
-        }
         const todayStr = new Date().toISOString().split('T')[0];
         const storedDailyMcq = await AsyncStorage.getItem(`@guru_daily_mcq_${todayStr}`);
         if (storedDailyMcq) {
@@ -1732,12 +1731,6 @@ export default function App() {
     }
   };
 
-  const showToast = (msg: string) => {
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(msg, ToastAndroid.SHORT);
-    }
-  };
-
   // --- CHAT MANAGEMENT (SINGLE CONTINUOUS CONVERSATION) ---
   const handleClearChat = async () => {
     setChatMessages([]);
@@ -1981,97 +1974,6 @@ export default function App() {
     setSelectedOption(index);
     setQuizStatus(index === currentQuiz.correctIndex ? 'correct' : 'wrong');
     void checkAndUpdateDailyStreak(true);
-  };
-
-  // --- REVENUECAT DONATION & SUPPORT ENGINE ---
-  useEffect(() => {
-    const initRevenueCat = async () => {
-      try {
-        if (Platform.OS === 'android' || Platform.OS === 'ios') {
-          Purchases.setLogLevel(Purchases.LOG_LEVEL.DEBUG);
-          await Purchases.configure({ apiKey: 'goog_RmztSEyguCfzJskBlCWHaEUgQAL' });
-
-          try {
-            const customerInfo = await Purchases.getCustomerInfo();
-            if (customerInfo?.entitlements?.active && Object.keys(customerInfo.entitlements.active).length > 0) {
-              setIsPatron(true);
-            }
-          } catch (_) {}
-
-          try {
-            const off = await Purchases.getOfferings();
-            if (off?.current) {
-              setOfferings(off.current);
-            }
-          } catch (_) {}
-
-          Purchases.addCustomerInfoUpdateListener((info: CustomerInfo) => {
-            if (info?.entitlements?.active && Object.keys(info.entitlements.active).length > 0) {
-              setIsPatron(true);
-            }
-          });
-        }
-      } catch (err) {
-        console.log('RevenueCat initialization notice:', err);
-      }
-    };
-
-    void initRevenueCat();
-  }, []);
-
-  const handleSponsorNow = async (count: number) => {
-    setIsPurchasing(true);
-    setDonationSuccessMsg(null);
-
-    try {
-      let isSuccess = false;
-      if (offerings?.availablePackages && offerings.availablePackages.length > 0) {
-        const pkg = offerings.availablePackages[0];
-        const res = await Purchases.purchasePackage(pkg);
-        if (res?.customerInfo) {
-          isSuccess = true;
-        }
-      } else {
-        // Direct sponsorship completion fallback for demo and offline test environments
-        isSuccess = true;
-      }
-
-      if (isSuccess) {
-        const newTotal = (lifetimeSponsorCount || 0) + count;
-        setLifetimeSponsorCount(newTotal);
-        setIsPatron(true);
-        await AsyncStorage.setItem('@guru_is_patron', 'true');
-        await AsyncStorage.setItem('@guru_lifetime_sponsor_count', newTotal.toString());
-        await AsyncStorage.setItem('@guru_sponsor_count', count.toString());
-        setDonationSuccessMsg(`Thank you. You are actively sponsoring ${newTotal} rural student${newTotal > 1 ? 's' : ''} in Nepal with a complete offline AI toolkit.`);
-        showToast(`Sponsorship completed for ${count} student${count > 1 ? 's' : ''}. Thank you.`);
-      }
-    } catch (err: any) {
-      if (!err?.userCancelled) {
-        console.log('RevenueCat sponsorship note:', err);
-        showToast('Payment was not completed.');
-      } else {
-        showToast('Payment cancelled.');
-      }
-    } finally {
-      setIsPurchasing(false);
-    }
-  };
-
-  const handleRestorePurchases = async () => {
-    try {
-      setIsPurchasing(true);
-      setIsPatron(true);
-      await AsyncStorage.setItem('@guru_is_patron', 'true');
-      const restoredInfo = await Purchases.restorePurchases();
-      showToast('Sponsorship status verified & active!');
-    } catch (e) {
-      setIsPatron(true);
-      await AsyncStorage.setItem('@guru_is_patron', 'true');
-      showToast('Sponsorship active on this device!');
-    } finally {
-      setIsPurchasing(false);
-    }
   };
 
   // --- BOOT SCREEN ---
@@ -2367,17 +2269,25 @@ export default function App() {
           <Text style={styles.appHeaderTitle}>Guru</Text>
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity
-            style={styles.headerSponsorPill}
-            activeOpacity={0.8}
-            onPress={() => setIsPaywallModalOpen(true)}
-          >
-            <Heart size={13} color="#ffffff" style={{ marginRight: 5 }} />
-            <Text style={styles.headerSponsorText}>
-              {isPatron ? 'Patron' : 'Sponsor'}
-            </Text>
-          </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
+          {/* Supporter Badge: When user is a supporter, show active tier badge. Otherwise show simple Sponsor pill */}
+          {supporterBadge.tier !== 'none' ? (
+            <SupporterBadge
+              badge={supporterBadge}
+              count={lifetimeSponsorCount}
+              compact
+              onPress={() => setActiveTab('donate')}
+            />
+          ) : (
+            <TouchableOpacity
+              style={styles.headerSponsorPill}
+              activeOpacity={0.8}
+              onPress={() => setActiveTab('donate')}
+            >
+              <Heart size={13} color="#ffffff" style={{ marginRight: 5 }} />
+              <Text style={styles.headerSponsorText}>Sponsor</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.headerUserPill}
@@ -2859,194 +2769,25 @@ export default function App() {
         </ScrollView>
       )}
 
-      {/* TAB 4: GURU DAKSHINA - SPONSOR A RURAL NEPAL STUDENT'S FUTURE */}
+      {/* TAB 4: GURU DAKSHINA - COMMUNITY SPONSORSHIP HUB */}
       {activeTab === 'donate' && (
-        <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <View style={styles.dakshinaHeaderRow}>
-            <Gift size={20} color="#ffffff" style={{ marginRight: 8 }} />
-            <Text style={styles.dakshinaMainTitle}>SPONSOR A STUDENT'S FUTURE</Text>
-          </View>
-          <Text style={styles.dakshinaMainSub}>
-            Empower a student in rural Nepal with a complete offline study toolkit. Provide essential learning resources, from textbooks to step-by-step solutions.
-          </Text>
-
-          {/* 6-Grid Feature Icons */}
-          <View style={styles.dakshinaGridContainer}>
-            <View style={styles.dakshinaGridItem}>
-              <BookOpen size={24} color="#ffffff" />
-              <Text style={styles.dakshinaGridLabel}>Full Solutions</Text>
-            </View>
-            <View style={styles.dakshinaGridItem}>
-              <Box size={24} color="#ffffff" />
-              <Text style={styles.dakshinaGridLabel}>Class 10 Textbooks</Text>
-            </View>
-            <View style={styles.dakshinaGridItem}>
-              <FileText size={24} color="#ffffff" />
-              <Text style={styles.dakshinaGridLabel}>Model Question Papers</Text>
-            </View>
-            <View style={styles.dakshinaGridItem}>
-              <Award size={24} color="#ffffff" />
-              <Text style={styles.dakshinaGridLabel}>Past Question Papers</Text>
-            </View>
-            <View style={styles.dakshinaGridItem}>
-              <Sparkles size={24} color="#ffffff" />
-              <Text style={styles.dakshinaGridLabel}>AI Tutor</Text>
-            </View>
-            <View style={styles.dakshinaGridItem}>
-              <Lightbulb size={24} color="#ffffff" />
-              <Text style={styles.dakshinaGridLabel}>Exam Prep & MCQs</Text>
-            </View>
-          </View>
-
-          {/* Lifetime Sponsorship Impact Counter */}
-          <View style={styles.dakshinaImpactCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-              <Users size={16} color="#ffffff" style={{ marginRight: 6 }} />
-              <Text style={styles.dakshinaImpactTitle}>
-                {`Lifetime Sponsorship: ${lifetimeSponsorCount} Student${lifetimeSponsorCount === 1 ? '' : 's'} Empowered`}
-              </Text>
-            </View>
-            <Text style={styles.dakshinaImpactText}>
-              {lifetimeSponsorCount > 0
-                ? `You have actively sponsored ${lifetimeSponsorCount} rural student${lifetimeSponsorCount === 1 ? '' : 's'} with a verified offline study kit.`
-                : 'Choose a sponsorship tier below to empower a student in remote Nepal.'}
-            </Text>
-          </View>
-
-          {/* Success Message Banner */}
-          {donationSuccessMsg && (
-            <View style={styles.successBanner}>
-              <CheckCircle2 size={18} color="#ffffff" />
-              <Text style={styles.successBannerText}>{donationSuccessMsg}</Text>
-            </View>
-          )}
-
-          {/* Offline Kit Contents Checklist Card */}
-          <View style={styles.dakshinaChecklistCard}>
-            <Text style={styles.dakshinaChecklistHeader}>Offline Kit Contents</Text>
-            <View style={styles.dakshinaChecklistRow}>
-              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.dakshinaChecklistText}>Full SEE Solutions</Text>
-            </View>
-            <View style={styles.dakshinaChecklistRow}>
-              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.dakshinaChecklistText}>Class 10 Textbooks</Text>
-            </View>
-            <View style={styles.dakshinaChecklistRow}>
-              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.dakshinaChecklistText}>Model Question Papers</Text>
-            </View>
-            <View style={styles.dakshinaChecklistRow}>
-              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.dakshinaChecklistText}>Tutor AI</Text>
-            </View>
-            <View style={[styles.dakshinaChecklistRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
-              <Check size={14} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.dakshinaChecklistText}>Exam Prep & MCQs</Text>
-            </View>
-          </View>
-
-          {/* YOUR CONTRIBUTION MAKES A DIFFERENCE CARD */}
-          <Text style={styles.dakshinaSectionTitle}>YOUR CONTRIBUTION MAKES A DIFFERENCE</Text>
-          <View style={styles.dakshinaDonateCard}>
-            <Text style={styles.dakshinaDonateDesc}>
-              For $1, 1 rural student who needs it gets full access to all educational resources and an offline study toolkit.
-            </Text>
-
-            <Text style={styles.dakshinaMultiplierLabel}>How many students would you like to sponsor?</Text>
-
-            {/* Counter and Price Row */}
-            <View style={styles.dakshinaMultiplierRow}>
-              <View style={styles.dakshinaCounterBox}>
-                <TouchableOpacity
-                  style={styles.dakshinaCounterBtn}
-                  onPress={() => setSponsorCount((prev) => Math.max(1, prev - 1))}
-                  activeOpacity={0.7}
-                >
-                  <Minus size={15} color="#ffffff" />
-                </TouchableOpacity>
-
-                <View style={styles.dakshinaCounterValueBox}>
-                  <Users size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.dakshinaCounterValueText}>{sponsorCount}</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.dakshinaCounterBtn}
-                  onPress={() => setSponsorCount((prev) => Math.min(100, prev + 1))}
-                  activeOpacity={0.7}
-                >
-                  <Plus size={15} color="#ffffff" />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.dakshinaPriceBox}>
-                <DollarSign size={16} color="#ffffff" style={{ marginRight: 2 }} />
-                <View>
-                  <Text style={styles.dakshinaPriceText}>{`$${(sponsorCount * 1).toFixed(2)}`}</Text>
-                  <Text style={styles.dakshinaPriceCurrency}>USD</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Quick Count Selection Chips */}
-            <View style={styles.dakshinaQuickChipsRow}>
-              {[1, 3, 5, 10, 20].map((num) => (
-                <TouchableOpacity
-                  key={`chip-${num}`}
-                  style={[
-                    styles.dakshinaQuickChip,
-                    sponsorCount === num && styles.dakshinaQuickChipActive,
-                  ]}
-                  onPress={() => setSponsorCount(num)}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.dakshinaQuickChipText,
-                      sponsorCount === num && styles.dakshinaQuickChipTextActive,
-                    ]}
-                  >
-                    {`${num} St.`}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.dakshinaSummaryText}>
-              {`Sponsor ${sponsorCount} Student${sponsorCount > 1 ? 's' : ''} for $${(sponsorCount * 1).toFixed(2)} total`}
-            </Text>
-
-            <TouchableOpacity
-              style={styles.dakshinaSponsorBtn}
-              activeOpacity={0.85}
-              disabled={isPurchasing}
-              onPress={() => handleSponsorNow(sponsorCount)}
-            >
-              {isPurchasing ? (
-                <ActivityIndicator size="small" color="#000000" />
-              ) : (
-                <Text style={styles.dakshinaSponsorBtnText}>SPONSOR NOW</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {/* Profile Edit Row */}
-          <TouchableOpacity
-            style={styles.dakshinaProfileBtn}
-            onPress={() => {
-              setName(user?.name || '');
-              setSchool(user?.school || '');
-              setScreen('onboarding');
-            }}
-            activeOpacity={0.8}
-          >
-            <User size={14} color="#71717a" style={{ marginRight: 8 }} />
-            <Text style={styles.dakshinaProfileBtnText}>{`${user?.name || 'Sangam'} | Edit Profile`}</Text>
-            <ChevronRight size={14} color="#71717a" />
-          </TouchableOpacity>
-        </ScrollView>
+        <GuruDakshinaHub
+          isPatron={isPatron}
+          badge={supporterBadge}
+          sponsorCount={sponsorCount}
+          setSponsorCount={setSponsorCount}
+          lifetimeSponsorCount={lifetimeSponsorCount}
+          isPurchasing={isPurchasing}
+          donationSuccessMsg={donationSuccessMsg}
+          onSponsor={handleSponsor}
+          onRestore={handleRestore}
+          userName={user?.name || 'Student'}
+          onEditProfile={() => {
+            setName(user?.name || '');
+            setSchool(user?.school || '');
+            setScreen('onboarding');
+          }}
+        />
       )}
 
       {/* FREE MOVABLE DRAGGABLE FLOATING GURU AI SPHERE (ALWAYS ACTIVE & ACCESSIBLE ACROSS TABS & PDF VIEWER) */}
@@ -3283,161 +3024,6 @@ export default function App() {
           </View>
         </View>
       )}
-
-      {/* --- SINGLE-SCREEN REVENUECAT SPONSORSHIP PAYWALL MODAL --- */}
-      <Modal
-        visible={isPaywallModalOpen}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setIsPaywallModalOpen(false)}
-      >
-        <View style={styles.paywallBackdrop}>
-          <View style={styles.paywallSheet}>
-            {/* Header */}
-            <View style={styles.paywallHeaderRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Heart size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.paywallTitle}>Guru Dakshina</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.paywallCloseBtn}
-                onPress={() => setIsPaywallModalOpen(false)}
-              >
-                <X size={18} color="#ffffff" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-              <Text style={styles.paywallSubtitle}>
-                Empower a rural student in Nepal with offline AI models and complete Class 10 CDC curriculum.
-              </Text>
-
-              {/* Lifetime Sponsorship Counter */}
-              <View style={styles.paywallImpactBadge}>
-                <Users size={16} color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.paywallImpactText}>
-                  {`Lifetime Impact: ${lifetimeSponsorCount} Rural Student${lifetimeSponsorCount === 1 ? '' : 's'} Empowered`}
-                </Text>
-              </View>
-
-              {/* What $1 Covers */}
-              <Text style={styles.paywallSectionLabel}>WHAT YOUR $1 SPONSORSHIP COVERS</Text>
-              <View style={styles.paywallFeaturesBox}>
-                <View style={styles.paywallFeatureItem}>
-                  <HardDrive size={15} color="#ffffff" style={{ marginRight: 10 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.paywallFeatureTitle}>Local Storage & Offline AI Kit</Text>
-                    <Text style={styles.paywallFeatureDesc}>Gemma 4 quantized model pre-loaded on device storage.</Text>
-                  </View>
-                </View>
-
-                <View style={styles.paywallFeatureItem}>
-                  <BookOpen size={15} color="#ffffff" style={{ marginRight: 10 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.paywallFeatureTitle}>Complete Class 10 CDC Curriculum</Text>
-                    <Text style={styles.paywallFeatureDesc}>Textbooks and SEE 2081 past papers across 7 provinces.</Text>
-                  </View>
-                </View>
-
-                <View style={styles.paywallFeatureItem}>
-                  <Cpu size={15} color="#ffffff" style={{ marginRight: 10 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.paywallFeatureTitle}>100% Offline On-Device Inference</Text>
-                    <Text style={styles.paywallFeatureDesc}>Runs during electricity and internet blackouts.</Text>
-                  </View>
-                </View>
-
-                <View style={[styles.paywallFeatureItem, { borderBottomWidth: 0, paddingBottom: 0 }]}>
-                  <ShieldCheck size={15} color="#ffffff" style={{ marginRight: 10 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.paywallFeatureTitle}>Zero Recurring Fees for Students</Text>
-                    <Text style={styles.paywallFeatureDesc}>Guru is permanently free and unrestricted for rural youth.</Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* Interactive Counter */}
-              <Text style={styles.paywallSectionLabel}>SELECT NUMBER OF STUDENTS TO SPONSOR</Text>
-              <View style={styles.dakshinaMultiplierRow}>
-                <View style={styles.dakshinaCounterBox}>
-                  <TouchableOpacity
-                    style={styles.dakshinaCounterBtn}
-                    onPress={() => setSponsorCount((prev) => Math.max(1, prev - 1))}
-                    activeOpacity={0.7}
-                  >
-                    <Minus size={15} color="#ffffff" />
-                  </TouchableOpacity>
-
-                  <View style={styles.dakshinaCounterValueBox}>
-                    <Users size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                    <Text style={styles.dakshinaCounterValueText}>{sponsorCount}</Text>
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.dakshinaCounterBtn}
-                    onPress={() => setSponsorCount((prev) => Math.min(100, prev + 1))}
-                    activeOpacity={0.7}
-                  >
-                    <Plus size={15} color="#ffffff" />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.dakshinaPriceBox}>
-                  <DollarSign size={16} color="#ffffff" style={{ marginRight: 2 }} />
-                  <View>
-                    <Text style={styles.dakshinaPriceText}>{`$${(sponsorCount * 1).toFixed(2)}`}</Text>
-                    <Text style={styles.dakshinaPriceCurrency}>USD</Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* Quick chips */}
-              <View style={styles.dakshinaQuickChipsRow}>
-                {[1, 3, 5, 10, 20].map((num) => (
-                  <TouchableOpacity
-                    key={`paywall-chip-${num}`}
-                    style={[
-                      styles.dakshinaQuickChip,
-                      sponsorCount === num && styles.dakshinaQuickChipActive,
-                    ]}
-                    onPress={() => setSponsorCount(num)}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.dakshinaQuickChipText,
-                        sponsorCount === num && styles.dakshinaQuickChipTextActive,
-                      ]}
-                    >
-                      {`${num} St.`}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Sponsor Button */}
-              <TouchableOpacity
-                style={styles.dakshinaSponsorBtn}
-                activeOpacity={0.85}
-                disabled={isPurchasing}
-                onPress={() => handleSponsorNow(sponsorCount)}
-              >
-                {isPurchasing ? (
-                  <ActivityIndicator size="small" color="#000000" />
-                ) : (
-                  <Text style={styles.dakshinaSponsorBtnText}>
-                    {`SPONSOR NOW • $${(sponsorCount * 1).toFixed(2)} USD`}
-                  </Text>
-                )}
-              </TouchableOpacity>
-
-              <Text style={styles.paywallTermsNotice}>
-                Transactions are processed securely through RevenueCat and Google Play. Guru is an open-source educational initiative for students in Nepal.
-              </Text>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       {/* --- FULL-PAGE FLOATING GURU AI MODAL --- */}
       <Modal
@@ -3846,7 +3432,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#27272a',
-    maxWidth: 140,
+    maxWidth: 110,
+    flexShrink: 1,
   },
   headerUserName: {
     fontSize: 11.5,
