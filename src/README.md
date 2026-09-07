@@ -11,17 +11,17 @@ When building Guru, our core rule was simple: **never block a student from learn
 Early iterations forced students to download 2.5 GB of AI models on the very first screen before they could see anything. In rural Nepal, where mobile data is expensive, internet is spotty, and electricity can cut out, that meant students were locked out of their textbooks on day one.
 
 We re-architected the entire app around **progressive access**:
-1. **Instant Curriculum Access**: The moment a student opens Guru, all official Grade 10 CDC textbooks (Science, Math, Social, Nepali, English, Opt Math, Computer), SEE past papers from all 7 provinces, model solutions, and chapter-wise MCQs are immediately accessible. They are bundled directly inside the app and open with 0ms delay.
+1. **Instant Curriculum Access**: The moment a student opens Guru, all official Grade 10 CDC textbooks (Science, Math, Social, Nepali, English, Opt Math, Computer), SEE past papers from all 7 provinces, model solutions, and chapter-wise MCQs are immediately accessible. They are bundled directly inside the app and open instantly without waiting for any download.
 2. **On-Demand AI Activation**: The 2.5 GB Google Gemma 4 and Whisper downloads are shifted to just-in-time activation. When a student decides to ask the AI Tutor a question, the app checks if the weights are on disk. If not, it smoothly opens the model manager with live progress, speed, and ETA. Once downloaded, everything runs 100% offline forever.
 
 ---
 
 ## Key Modules & Components
 
-### 1. `scienceSyllabusMemory.ts` (Instant 0ms MCQ Engine)
+### 1. `scienceSyllabusMemory.ts` (Class 10 MCQ Practice Bank)
 Rather than making slow, battery-draining AI inference calls for standard syllabus revision questions, I built an authentic curriculum memory bank containing real Class 10 CDC exam questions:
 - Covers all 19 major science chapters: Force, Pressure, Energy, Heat, Light, Electricity & Magnetism, Classification of Elements, Chemical Reaction, Acid Base & Salt, Some Gases, Metals, Carbon & Compounds, Heredity, Reproduction, Nervous & Glandular System, Blood Circulation, Nature & Environment, Earth History, and the Universe.
-- Instant 0ms retrieval with zero layout shifts or CPU spikes.
+- Instant retrieval directly from memory without waiting for AI models.
 - Shuffled option distribution and instant answer verification with clear conceptual explanations.
 
 ### 2. `MathMarkdownRenderer.tsx` (Readable Formulas in Dark Mode)
