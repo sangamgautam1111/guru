@@ -88,7 +88,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
     @Volatile private var activeBackendType: String = "CPU"
 
     // Inference performance metrics — exposed to React Native so the UI can optionally
-    // show "X tokens/sec" during generation, proving to the student (and hackathon judges)
+    // show "X tokens/sec" during generation, proving to the student
     // that this is genuinely running on-device, not calling a cloud API.
     private var lastInferenceTimeMs: Long = 0
     private var lastTokenCount: Int = 0

@@ -187,7 +187,7 @@ class ModelDownloadService : Service() {
             }
             ACTION_COMPLETE -> {
                 val notif = buildNotification(
-                    title = "✅ Guru Offline AI Models Ready",
+                    title = "Guru Offline AI Models Ready",
                     text = "All 3 offline AI models downloaded and verified (100%).",
                     subText = "Ready to learn offline",
                     percentage = 100,
@@ -201,7 +201,7 @@ class ModelDownloadService : Service() {
             ACTION_ERROR -> {
                 val errorMsg = intent.getStringExtra(EXTRA_ERROR_MSG) ?: "Download failed"
                 val notif = buildNotification(
-                    title = "❌ AI Model Download Paused",
+                    title = "AI Model Download Paused",
                     text = errorMsg,
                     percentage = 0,
                     isOngoing = false
