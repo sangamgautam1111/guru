@@ -4,42 +4,52 @@
 
 [![Shipathon 2026](https://img.shields.io/badge/Shipathon-2026-blue?style=flat-square)](https://www.shipathon.com)
 [![RevenueCat](https://img.shields.io/badge/RevenueCat-Next_Gen_Track-ff5a5f?style=flat-square&logo=revenuecat)](https://github.com/sangamgautam1111/guru/blob/master/src/services/RevenueCatService.ts)
+[![Demo Video](https://img.shields.io/badge/Demo_Video-YouTube-red?style=flat-square&logo=youtube)](https://youtu.be/pWdVwdpM14A?si=Ti_yTDg1_KZKW3tb)
 [![Status](https://img.shields.io/badge/Status-Shipped-brightgreen?style=flat-square)](https://github.com/sangamgautam1111/guru/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+Guru is an offline AI tutor for rural students in Nepal, powered by on-device LiteRT-LM (Gemma 2B) and RevenueCat.
 
 ![Guru Classroom Pilot in Nepal](assets/classroom_pilot.jpg)
 *Grade 10 students in rural Nepal learning with Guru offline AI in their classroom.*
 
 ## The Story Behind Guru
 
-One night, I was studying for my SEE exams and the power went out. No light, no internet — I couldn't study for the rest of the night.
+One night, I was studying for my SEE exams and the power went out. No light, no internet - I couldn't study for the rest of the night.
 
-It got me thinking — what if there was an AI tutor that could teach you even when the internet is gone? UNICEF says over a billion students worldwide don't have internet access, with the highest numbers in South Asia and West and Central Africa.
+It got me thinking - what if there was an AI tutor that could teach you even when the internet is gone? UNICEF says over a billion students worldwide don't have internet access, with the highest numbers in South Asia and West and Central Africa.
 
-I decided to stop thinking about it globally and focus on what I know — Nepal. I went to Kavre, my village, and talked to a student named Milan. I asked him what his biggest problem with studying was. He said:
+I decided to stop thinking about it globally and focus on what I know - Nepal. I went to Kavre, my village, and talked to a student named Milan. I asked him what his biggest problem with studying was. He said:
 
 > "Whenever I have doubts in my studies, it is difficult to find answers by searching the internet or using AI, because internet access is limited in our village."
 
 ![Milan carrying his study materials in Kavre, Nepal](https://raw.githubusercontent.com/sangamgautam1111/guru/master/assets/student_milan.jpg)
 *Milan carrying his study materials in Kavre, Nepal.*
 
-That gave me the clarity I needed. I'm 14, and I knew exactly what had to be built. I picked Google's Gemma 4 E2B model and ran it through LiteRT — even on devices with low RAM, the kind of phones students in these areas actually have.
+That gave me the clarity I needed. I'm 14, and I knew exactly what had to be built. I picked Google's Gemma 4 E2B model and ran it through LiteRT - even on devices with low RAM, the kind of phones students in these areas actually have.
 
 That's how Guru started.
 
+## Demo Video
+
+Watch the 1:58 walkthrough running on a physical Android device:
+
+- **[Watch Guru Demo on YouTube (1:58)](https://youtu.be/pWdVwdpM14A?si=Ti_yTDg1_KZKW3tb)**
+- **[Teacher Feedback Video (MP4)](https://github.com/sangamgautam1111/guru/releases/download/v1.2.0/teacher_feedback.mp4)**: Real educator feedback on how Guru assists Grade 10 SEE students in rural Nepal.
+
 ## Features
 
-- **Ask by typing** — chat with Guru one-on-one about Science, Math, English, Nepali, Social Studies, Optional Math, or Computer Science and get step-by-step help
-- **Ask by photo** — snap a picture of a textbook problem using your camera, the app reads it through OCR and solves it
-- **Ask by voice** — speak your question through the mic using Whisper speech recognition, completely offline
-- **Listen to answers** — the app reads solutions back to you out loud using neural text-to-speech
-- **Practice MCQs** — quick chapter-wise multiple choice questions with instant answers and explanations to test what you learned
-- **Class 10 textbooks built in** — Science, Math, Social Studies, Nepali, English, Optional Math, and Computer Science textbooks (with English and Nepali medium choices for Science and Math), readable inside the app
-- **SEE 2081 past papers** — province-wise past papers for Science, Math, English, Nepali, Social Studies, Optional Math, and Computer Science from all 7 provinces
-- **SEE 2082 model paper solutions** — full solutions for Science, Math, English, Nepali, and Social Studies
-- **Daily study streaks** — track your daily streak to stay consistent every day
-- **In-app PDF reader** — zoom, navigate pages, everything inside the app without needing any external app
-- **Guru Dakshina** — optional $1 sponsorship to fund an offline AI kit for a rural student
+- **Ask by typing** - chat with Guru one-on-one about Science, Math, English, Nepali, Social Studies, Optional Math, or Computer Science and get step-by-step help
+- **Ask by photo** - snap a picture of a textbook problem using your camera, the app reads it through OCR and solves it
+- **Ask by voice** - speak your question through the mic using Whisper speech recognition, completely offline
+- **Listen to answers** - the app reads solutions back to you out loud using neural text-to-speech
+- **Practice MCQs** - quick chapter-wise multiple choice questions with instant answers and explanations to test what you learned
+- **Class 10 textbooks built in** - Science, Math, Social Studies, Nepali, English, Optional Math, and Computer Science textbooks (with English and Nepali medium choices for Science and Math), readable inside the app
+- **SEE 2081 past papers** - province-wise past papers for Science, Math, English, Nepali, Social Studies, Optional Math, and Computer Science from all 7 provinces
+- **SEE 2082 model paper solutions** - full solutions for Science, Math, English, Nepali, and Social Studies
+- **Daily study streaks** - track your daily streak to stay consistent every day
+- **In-app PDF reader** - zoom, navigate pages, everything inside the app without needing any external app
+- **Guru Dakshina** - optional $1 sponsorship to fund an offline AI kit for a rural student
 
 ## Download
 
