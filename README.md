@@ -35,11 +35,12 @@ That's how Guru started.
 Watch the 1:58 walkthrough running on a physical Android device:
 
 - **[Watch Guru Demo on YouTube (1:58)](https://youtu.be/pWdVwdpM14A?si=Ti_yTDg1_KZKW3tb)**
-- **[Teacher Feedback Video (MP4)](https://github.com/sangamgautam1111/guru/releases/download/v1.2.0/teacher_feedback.mp4)**: Real educator feedback on how Guru assists Grade 10 SEE students in rural Nepal.
+- **[Teacher Feedback Video (MP4)](https://github.com/sangamgautam1111/guru/releases/download/v1.3.0/teacher_feedback.mp4)**: Real educator feedback on how Guru assists Grade 10 SEE students in rural Nepal.
 
 ## Features
 
 - **Ask by typing** - chat with Guru one-on-one about Science, Math, English, Nepali, Social Studies, Optional Math, or Computer Science and get step-by-step help
+- **Model accuracy disclaimer** - clear reminder banner in the chat screen to verify critical answers with textbooks
 - **Ask by photo** - snap a picture of a textbook problem using your camera, the app reads it through OCR and solves it
 - **Ask by voice** - speak your question through the mic using Whisper speech recognition, completely offline
 - **Listen to answers** - the app reads solutions back to you out loud using neural text-to-speech
@@ -139,6 +140,17 @@ Tested live on physical Android devices using ADB system telemetry (`dumpsys mem
 | UI Streaming FPS | 20 – 24 FPS | 60.0 FPS (16.6ms target) |
 | Memory Pressure (OOM) | 0 Crashes (Stable headroom) | 0 Crashes (Maximum headroom) |
 | Network Dependency | Offline | Offline |
+
+## Codebase Architecture
+
+Originally, Guru was built as a single 5,400-line prototype in `App.tsx`. To keep the code clean, reliable, and easy to maintain, I refactored the entire application into a modular architecture under `src/`:
+
+- **`src/screens/`** — Screen components (`HomeTab`, `RevisionTab`, `ChatModal`, `DownloadScreen`, `OnboardingScreen`, `BootScreen`).
+- **`src/hooks/`** — Custom React hooks separating UI from business logic (`useChat`, `useQuiz`, `useStreak`, `useDakshina`, `useModelManager`, `usePdfViewer`, `useVoiceMode`).
+- **`src/services/`** — RevenueCat integration (`RevenueCatService.ts`), native AI engine bridges (`GemmaRunner.ts`), and curriculum syllabus memory.
+- **`src/data/`** — Official CDC syllabus chapters, SEE board exam papers, model solutions, and 19-chapter science MCQ practice banks.
+- **`src/components/`** — Reusable UI widgets, navigation bar, and supporter badge displays.
+- **`App.tsx`** — Lightweight ~370-line orchestrator handling top-level screen transitions.
 
 ## Development
 

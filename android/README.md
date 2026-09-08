@@ -31,15 +31,15 @@ React Native Bridge (JNI)
 
 This is the core native module (over 2,000 lines of Kotlin) that turns a student's phone into an autonomous AI classroom without needing the internet.
 
-- **LiteRT-LM C++ Runtime Integration**: We dynamically load the 4-bit quantized Google Gemma 4 E2B model weights (`.litertlm` format) straight into physical RAM.
-- **Dynamic Hardware Negotiation (GPU vs CPU)**: Many phones in Nepal run budget MediaTek chipsets (like the Helio G85) where GPU shader compilation for LLMs can either fail or cause driver panics. The module performs hardware capability checks on startup. If OpenCL/Vulkan GPU acceleration is safe, it routes computation to the GPU; otherwise, it smoothly falls back to multi-threaded CPU execution with optimized NEON vector math.
-- **Low-Memory (OOM) Defense**: Phones with 3 GB or 4 GB RAM will immediately kill apps that exceed heap boundaries. The module monitors system memory pressure using `ActivityManager.MemoryInfo`, dynamically scales the context window (capping at 2,048 tokens on low-tier hardware), and forces clean garbage-collection sweeps between inference runs.
-- **Degenerate Loop & Repetition Breaker**: Quantized models can occasionally get stuck in repetitive token loops when answering complex questions. I engineered an on-the-fly n-gram ring buffer in Kotlin that monitors incoming tokens in real time. If a repeating cycle is detected, it terminates the stream cleanly and presents a complete, coherent answer.
-- **Native PDF Renderer**: Instead of bundling heavy third-party PDF engines that bloat the APK and lag on budget phones, we tap directly into Android's native `android.graphics.pdf.PdfRenderer`. It renders vector textbook pages into smooth hardware-accelerated bitmaps at 60 FPS.
-- **Offline Multimodal Stack**:
-  - **OCR**: Integrated Google ML Kit Latin Text Recognition for zero-lag extraction of question text from camera snaps.
-  - **Voice (Whisper)**: Quantized speech-to-text running via ONNX Runtime so students can ask questions by speaking in their natural voice.
-  - **TTS**: Android's `TextToSpeech` engine configured with Nepali and English language profiles to read solutions out loud.
+- **LiteRT-LM C++ Runtime Integration**: The native module dynamically loads the 4-bit quantized Google Gemma model weights (`.litertlm` format) straight into physical RAM.
+- **Dynamic Hardware Negotiation (GPU vs CPU)**: Many phones in Nepal run budget MediaTek chipsets (like the Helio G85) where GPU shader compilation for LLMs can either fail or cause driver crashes. The module checks hardware capabilities on startup. If OpenCL/Vulkan GPU acceleration is safe, it routes computation to the GPU; otherwise, it smoothly falls back to multi-threaded CPU execution with NEON vector math.
+- **Low-Memory (OOM) Protection**: Phones with 3 GB or 4 GB RAM will quickly kill apps that exceed memory boundaries. The module monitors system memory pressure using `ActivityManager.MemoryInfo`, dynamically scales the context window (capping at 2,048 tokens on budget hardware), and runs clean garbage-collection sweeps between inference runs.
+- **Repetition Loop Breaker**: Quantized models can occasionally get stuck repeating tokens when answering complex questions. I built an on-the-fly n-gram ring buffer in Kotlin that monitors incoming tokens in real time. If a repeating loop is detected, it terminates the stream cleanly and presents a complete, coherent answer.
+- **Native PDF Renderer**: Instead of bundling heavy third-party PDF engines that bloat the APK and lag on budget phones, it taps directly into Android's native `android.graphics.pdf.PdfRenderer`. It renders textbook pages into smooth hardware-accelerated bitmaps.
+- **Offline Voice and Vision**:
+  - **OCR**: Integrated Google ML Kit Latin Text Recognition for fast extraction of question text from camera photos.
+  - **Voice (Whisper)**: Quantized speech-to-text running via ONNX Runtime so students can ask questions by speaking naturally.
+  - **TTS**: Android's built-in `TextToSpeech` engine configured with Nepali and English language profiles to read solutions out loud.
 
 ### 2. `ModelDownloadService.kt` (Surviving Unstable Wi-Fi)
 

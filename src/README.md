@@ -1,67 +1,85 @@
-# App Services, Curriculum Logic & UI (`src/`)
+# App Architecture & Logic (`src/`)
 
-This directory houses the TypeScript application logic, CDC curriculum memory, and service bridges that power Guru's user experience.
+This directory contains the TypeScript application code, curriculum data, and custom hooks that power Guru.
 
----
-
-## Architectural Philosophy
-
-When building Guru, our core rule was simple: **never block a student from learning**. 
-
-Early iterations forced students to download 2.5 GB of AI models on the very first screen before they could see anything. In rural Nepal, where mobile data is expensive, internet is spotty, and electricity can cut out, that meant students were locked out of their textbooks on day one.
-
-We re-architected the entire app around **progressive access**:
-1. **Instant Curriculum Access**: The moment a student opens Guru, all official Grade 10 CDC textbooks (Science, Math, Social, Nepali, English, Opt Math, Computer), SEE past papers from all 7 provinces, model solutions, and chapter-wise MCQs are immediately accessible. They are bundled directly inside the app and open instantly without waiting for any download.
-2. **On-Demand AI Activation**: The 2.5 GB Google Gemma 4 and Whisper downloads are shifted to just-in-time activation. When a student decides to ask the AI Tutor a question, the app checks if the weights are on disk. If not, it smoothly opens the model manager with live progress, speed, and ETA. Once downloaded, everything runs 100% offline forever.
+Originally, the entire React Native app was written inside a single 5,400-line `App.tsx` file. While that was fine for early prototyping, it became difficult to maintain and test. I refactored the entire codebase into small, single-responsibility modules under `src/`, bringing `App.tsx` down to just ~370 lines of clean navigation and orchestration.
 
 ---
 
-## Key Modules & Components
+## Folder Structure
 
-### 1. `scienceSyllabusMemory.ts` (Class 10 MCQ Practice Bank)
-Rather than making slow, battery-draining AI inference calls for standard syllabus revision questions, I built an authentic curriculum memory bank containing real Class 10 CDC exam questions:
-- Covers all 19 major science chapters: Force, Pressure, Energy, Heat, Light, Electricity & Magnetism, Classification of Elements, Chemical Reaction, Acid Base & Salt, Some Gases, Metals, Carbon & Compounds, Heredity, Reproduction, Nervous & Glandular System, Blood Circulation, Nature & Environment, Earth History, and the Universe.
-- Instant retrieval directly from memory without waiting for AI models.
-- Shuffled option distribution and instant answer verification with clear conceptual explanations.
-
-### 2. `MathMarkdownRenderer.tsx` (Readable Formulas in Dark Mode)
-Science and mathematics answers require clean, precise typography:
-- Parses LaTeX syntax (`$F = G \frac{m_1 m_2}{r^2}$`, chemical equations, radical signs, exponents).
-- Renders readable mathematical formulas seamlessly within dark-mode chat bubbles.
-
-### 3. `SubjectIllustrations.tsx` (Handcrafted Visual Identity)
-To make the interface welcoming for young students, this component renders custom, resolution-independent SVG illustrations for every subject card:
-- Beakers and atoms for Science
-- Compass and geometry for Mathematics
-- Nepal flag and heritage for Social Studies
-- Code brackets for Computer Science
-- Books and quills for Languages
-
-### 4. `src/services/inference/GemmaRunner.ts`
-The typed TypeScript bridge that talks to our native Kotlin `LLMInferenceModule`:
-- Subscribes to native `onTokenStream` events for real-time streaming text rendering.
-- Listens for `onModelLoaded`, `onInferenceComplete`, and error events.
-- Provides clean `Promise`-based async APIs for starting generation, resetting sessions, and checking model status.
-
-### 5. `src/services/curriculum/CurriculumService.ts` & `src/data/curriculumData.ts`
-- Injects authentic CDC syllabus context into prompt templates so Gemma answers according to the official Nepal SEE marking criteria rather than generic web answers.
-- Holds formulas, chapter weightages, and past exam patterns.
-
-### 6. Dynamic On-Device Streak Engine
-- Tracks consecutive study days using local `AsyncStorage` (`STORAGE_KEYS.streakData`).
-- Compares calendar day timestamps between sessions to automatically increment streaks or reset them if a day is missed.
-- Requires zero backend servers or user accounts to function.
-
-### 7. RevenueCat Dakshina & Patronage Subsystem
-- **Service layer (`src/services/RevenueCatService.ts`)**: Handles SDK setup with my Google Play key (`goog_RmztSEyguCfzJskBlCWHaEUgQAL`), checks internet before attempting payments, and saves donor info to customer attributes.
-- **Custom React Hook (`src/hooks/useDakshina.ts`)**: Keeps track of how many students you sponsored in phone storage (`AsyncStorage`) and calculates your supporter badge (`Study Supporter`, `Classroom Patron`, `Vidya Guru Benefactor`).
-- **Sponsorship Hub & Badges (`src/components/GuruDakshinaHub.tsx` & `SupporterBadge.tsx`)**: The UI for sponsoring the $1 Student Kit (Parent's Phone — Zero Internet), with student count selectors and clean Lucide line icons.
-- **Release build safety**: Works without crashing on release builds, handles Airplane mode gracefully, and supports local test flows when Google Play Billing is unavailable.
+```
+src/
+├── components/          # Reusable UI widgets
+│   ├── BottomTabBar.tsx       # Bottom navigation bar (Home, Revision, Chat, Sponsor)
+│   ├── FloatingChatOrb.tsx    # Floating quick-access chat trigger
+│   ├── GuruDakshinaHub.tsx    # RevenueCat sponsorship UI ($1 student kit)
+│   ├── MediumChooserModal.tsx # Nepali vs English textbook medium picker
+│   └── SupporterBadge.tsx     # Supporter badge display (Study Supporter, Patron, Benefactor)
+├── constants/           # Storage keys and asset references
+│   └── storage.ts
+├── data/                # Offline curriculum and revision data
+│   ├── curriculumData.ts      # Class 10 CDC syllabus chapters and topics
+│   ├── pastPapers2081.ts      # Official SEE 2081 board exam papers across all 7 provinces
+│   ├── proSolutions.ts        # Model question solutions
+│   ├── quizPool.ts            # 19-chapter science MCQ practice question bank
+│   └── subjects.ts            # Subject metadata, icons, and colors
+├── hooks/               # Custom React hooks (business logic isolated from UI)
+│   ├── useChat.ts             # Chat state, message history, and OCR question handling
+│   ├── useClock.ts            # Real-time clock for the dashboard header
+│   ├── useDakshina.ts         # Sponsorship counts, badge logic, and local storage sync
+│   ├── useModelManager.ts     # Downloading, progress tracking, and AI model verification
+│   ├── usePdfViewer.ts        # Zoom, page navigation, and PDF document state
+│   ├── useQuiz.ts             # MCQ randomized options, score tracking, and explanations
+│   ├── useStreak.ts           # Daily study streak tracking with date calculations
+│   └── useVoiceMode.ts        # Whisper speech recording and audio state
+├── modals/              # Standalone modal dialogs
+│   ├── PastPapersModal.tsx    # Past papers and model solutions viewer
+│   └── PdfViewerModal.tsx     # Native full-screen textbook reader
+├── screens/             # Primary app screens and tabs
+│   ├── BootScreen.tsx         # Splash screen and initialization
+│   ├── ChatModal.tsx          # Full-screen AI tutor chat (with accuracy disclaimer banner)
+│   ├── DownloadScreen.tsx     # Gemma & Whisper on-device model manager
+│   ├── HomeTab.tsx            # Main dashboard with subjects, textbooks, and daily streak
+│   ├── MainScreen.tsx         # Main tab view coordinator
+│   ├── OnboardingScreen.tsx   # First-time student welcome and name setup
+│   └── RevisionTab.tsx        # Chapter MCQ practice and quick revision
+├── services/            # Native bridges and integrations
+│   ├── RevenueCatService.ts   # RevenueCat purchases, customer attributes, and offline check
+│   ├── curriculum/            # Curriculum syllabus memory service
+│   └── inference/             # TypeScript bridge to native Kotlin LiteRT-LM engine
+├── styles/              # Global dark theme and design tokens
+│   └── theme.ts
+├── types/               # TypeScript interfaces and data models
+│   └── index.ts
+└── utils/               # Helper utilities
+    └── formatGemmaResponse.ts # Cleans up model tokens and formats math markdown
+```
 
 ---
 
-## Engineering Standards
+## How the Core Pieces Work
 
-- **Zero Network Dependence**: Once AI models are downloaded, zero API requests leave the device. The app works flawlessly in Airplane mode.
-- **Memory Safety**: No leaking native listeners, lightweight SVG icons, and zero layout collapse during state transitions.
-- **Graceful Degradation**: If a device lacks camera hardware or microphone permissions, the textbook reader, MCQ engine, and typed AI tutor continue to function without interruption.
+### 1. Progressive Learning (Never Lock Out a Student)
+In villages across Nepal, internet is slow and power cuts happen often. If the app forced students to download 2.5 GB of AI models before opening, many could never use it.
+- When you first open Guru, you can immediately read all Class 10 textbooks, practice chapter MCQs, and solve SEE board papers. Everything opens right away without waiting.
+- The 2.5 GB AI models (Gemma 2B and Whisper) are downloaded only when you want to use the AI chat tutor. Once downloaded, the AI works 100% offline forever.
+
+### 2. Built-in Science MCQ Practice (`src/data/quizPool.ts`)
+Instead of running heavy AI inference just to practice standard revision questions, Guru has a built-in question bank covering all 19 Class 10 science chapters. It loads instantly, scrambles the choices, gives immediate feedback, and explains why an answer is right.
+
+### 3. Model Accuracy Disclaimer Banner (`src/screens/ChatModal.tsx`)
+Because on-device language models can occasionally make mistakes on complex problems, the top bar of the chat screen includes a clear reminder:
+> *"Model can be inaccurate sometimes. Please verify important answers."*
+
+This encourages students to cross-check critical formulas and definitions against their official textbook.
+
+### 4. RevenueCat Integration (`src/services/RevenueCatService.ts`)
+Guru uses RevenueCat for **Guru Dakshina**, an optional sponsorship feature where community members can sponsor a $1 offline study kit for a rural student.
+- Configured with a Google Play key (`goog_RmztSEyguCfzJskBlCWHaEUgQAL`) and Project ID `proj7a3c50f1`.
+- Checks connectivity before attempting a network purchase so it never crashes in Airplane mode.
+- In sideloaded builds without Google Play Billing accounts attached, it handles errors gracefully and lets reviewers test the sponsorship flow smoothly.
+- Saves the sponsor's tier and student count to RevenueCat customer attributes.
+
+### 5. Daily Study Streaks (`src/hooks/useStreak.ts`)
+Tracks consecutive study days directly on the device using `AsyncStorage`. It compares calendar dates between sessions to increment streaks or reset if a day was missed—completely offline with no account or server needed.
