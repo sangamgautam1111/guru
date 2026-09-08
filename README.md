@@ -99,6 +99,20 @@ Here is why that happened and how I fixed it:
 
 5. **Customer Attributes**: Every time someone sponsors students, the app saves their tier and total students sponsored directly to RevenueCat customer attributes.
 
+### Testing the RevenueCat Sponsorship (For Reviewers)
+
+Since Guru is submitted as a standalone APK for the Next Gen Track without a live Google Play Store listing, here is how you can test the sponsorship flow smoothly on your phone:
+
+1. **Turn on Wi-Fi or mobile data**: The AI tutor and all textbooks work completely offline, but sponsoring needs an internet connection to talk to RevenueCat.
+2. **Open the "Guru Dakshina" tab** (the heart icon at the bottom).
+3. **Pick how many students to sponsor** using the `-` / `+` counter or the quick buttons (like `1 St.`, `3 St.`, or `5 St.`).
+4. **Tap "Sponsor Now"**:
+   - The app connects to RevenueCat using my Google Play key (`goog_RmztSEyguCfzJskBlCWHaEUgQAL`).
+   - Since this is a sideloaded APK without Google Play Store billing accounts attached, the app catches that cleanly. It runs the sponsorship test, saves your student count in phone storage, syncs with RevenueCat customer attributes, and unlocks your supporter badge right away without crashing or showing a billing error.
+   - If you test this inside a Google Play sandbox account, the native Google Play purchase sheet will open directly.
+5. **Check your supporter badge**: Look at the top of the screen — you will see your new supporter badge (like *Study Supporter* or *Classroom Patron*) and your sponsored student count updated.
+6. **Testing Restore**: You can also tap "Restore Previous Sponsorship" at the bottom to verify that RevenueCat checks your past sponsorship status.
+
 ## Hardware Performance Benchmark
 
 Tested live on physical Android devices using ADB system telemetry (`dumpsys meminfo`, `dumpsys gfxinfo`, and `top`):
