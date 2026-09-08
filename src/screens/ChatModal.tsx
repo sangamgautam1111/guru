@@ -28,6 +28,7 @@ import {
   Camera,
   Image as ImageIcon,
   FileText,
+  AlertCircle,
 } from 'lucide-react-native';
 import { Message } from '../types';
 import { MathMarkdownRenderer } from '../../MathMarkdownRenderer';
@@ -118,6 +119,14 @@ export const ChatModal: React.FC<ChatModalProps> = ({
           >
             <RotateCcw size={18} color="#ffffff" />
           </TouchableOpacity>
+        </View>
+
+        {/* Top Warning Banner */}
+        <View style={styles.topWarningBanner}>
+          <AlertCircle size={10} color="#ffffff" style={{ marginRight: 5 }} />
+          <Text style={styles.topWarningText}>
+            Model can be inaccurate sometimes. Please verify important answers.
+          </Text>
         </View>
 
         <KeyboardAvoidingView
@@ -677,6 +686,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#71717a',
+  },
+  topWarningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0c0c0e',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#18181b',
+  },
+  topWarningText: {
+    fontSize: 10,
+    color: '#ffffff',
+    textAlign: 'center',
+    fontWeight: '400',
   },
 });
 
