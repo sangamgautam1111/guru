@@ -102,7 +102,7 @@ class RevenueCatService {
   }
 
   /**
-   * Purchases a package through RevenueCat Test Store.
+   * Purchases a package through RevenueCat.
    */
   public async purchasePackage(pkg: PurchasesPackage): Promise<{ customerInfo: CustomerInfo | null; userCancelled: boolean }> {
     try {

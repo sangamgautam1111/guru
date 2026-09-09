@@ -155,7 +155,7 @@ export function useDakshina(showToast: (message: string) => void) {
   /**
    * Triggers a sponsorship transaction.
    * Checks internet connectivity first to be transparent with the donor,
-   * then talks to RevenueCat Test Store to complete the sponsorship.
+   * then talks to RevenueCat to complete the sponsorship.
    */
   const handleSponsor = useCallback(
     async (count: number, tierTitle?: string): Promise<boolean> => {
@@ -195,7 +195,7 @@ export function useDakshina(showToast: (message: string) => void) {
             isSuccess = true;
           }
         } else {
-          // Direct fallback for Test Store sandbox mode
+          // Direct fallback for sideloaded sandbox testing
           isSuccess = true;
         }
 
