@@ -540,6 +540,58 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         return candidateFiles.firstOrNull { it.exists() && it.length() > 500L * 1024L * 1024L }
     }
 
+    /**
+     * Probes an initialized Engine with a 1-token generation test.
+     * Essential for Android GPU delegates (OpenCL) because:
+     * 1. Engine.initialize() and Engine.createSession() do NOT compile or dispatch OpenCL kernels.
+     * 2. When actual inference runs, if the phone's GPU driver has a max workgroup size < 512
+     *    (common on budget Adreno and Mali GPUs), OpenCL crashes with CL_INVALID_WORK_GROUP_SIZE.
+     * 3. This probe catches that error in under 100ms during startup, safely rejecting the GPU
+     *    and allowing immediate fallback to 100% universal ARM NEON CPU execution.
+     */
+    private fun testEngineWarmup(candidateEngine: Engine): Boolean {
+        var testSession: Session? = null
+        val latch = CountDownLatch(1)
+        val hasFailed = AtomicBoolean(false)
+        return try {
+            testSession = candidateEngine.createSession(
+                SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
+            )
+            testSession.generateContentStream(
+                listOf(InputData.Text("hi")),
+                object : ResponseCallback {
+                    override fun onNext(response: String) {
+                        latch.countDown()
+                    }
+                    override fun onDone() {
+                        latch.countDown()
+                    }
+                    override fun onError(throwable: Throwable) {
+                        Log.w(tag, "Engine warmup probe failed: ${throwable.message}")
+                        hasFailed.set(true)
+                        latch.countDown()
+                    }
+                }
+            )
+            val finished = latch.await(4, TimeUnit.SECONDS)
+            if (!finished || hasFailed.get()) {
+                false
+            } else {
+                true
+            }
+        } catch (t: Throwable) {
+            Log.w(tag, "Engine warmup exception: ${t.message}")
+            false
+        } finally {
+            try {
+                testSession?.cancelProcess()
+            } catch (_: Exception) {}
+            try {
+                testSession?.close()
+            } catch (_: Exception) {}
+        }
+    }
+
     @Synchronized
     private fun ensureModelInitialized(preferredPath: String? = null): Boolean {
         if (engine != null && !loadedModelPath.isNullOrBlank()) {
@@ -576,7 +628,8 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             val maxTokens = getMaxModelTokens()
             val cacheDir = reactApplicationContext.cacheDir.absolutePath
 
-            // Try GPU first for fast inference, fall back to CPU if unsupported
+            // Try GPU first for fast inference, fall back to universal CPU if unsupported or driver fails probe
+            var gpuEngine: Engine? = null
             try {
                 Log.d(tag, "Attempting GPU backend for faster inference...")
                 val gpuConfig = EngineConfig(
@@ -585,21 +638,25 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                     maxNumTokens = maxTokens,
                     cacheDir = cacheDir,
                 )
-                val gpuEngine = Engine(gpuConfig)
-                gpuEngine.initialize()
+                val candidateEngine = Engine(gpuConfig)
+                gpuEngine = candidateEngine
+                candidateEngine.initialize()
 
-                val gpuVerify = gpuEngine.createSession(
-                    SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
-                )
-                gpuVerify.close()
+                val isGpuUsable = testEngineWarmup(candidateEngine)
+                if (!isGpuUsable) {
+                    throw IllegalStateException("GPU probe failed kernel execution (e.g. invalid workgroup size or unstable OpenCL driver)")
+                }
 
-                engine = gpuEngine
+                engine = candidateEngine
                 loadedModelPath = resolvedPath
                 activeBackendType = "GPU"
-                Log.d(tag, "[OK] GPU backend initialized successfully")
+                Log.d(tag, "[OK] GPU backend verified and initialized successfully")
                 return true
-            } catch (gpuError: Exception) {
-                Log.w(tag, "GPU backend unavailable (${gpuError.message}), falling back to CPU")
+            } catch (gpuError: Throwable) {
+                Log.w(tag, "GPU backend unavailable or failed probe (${gpuError.message}), falling back to universal CPU execution")
+                try {
+                    gpuEngine?.close()
+                } catch (_: Throwable) {}
 
                 val cpuConfig = EngineConfig(
                     modelPath = resolvedPath,
@@ -610,18 +667,13 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 val cpuEngine = Engine(cpuConfig)
                 cpuEngine.initialize()
 
-                val cpuVerify = cpuEngine.createSession(
-                    SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
-                )
-                cpuVerify.close()
-
                 engine = cpuEngine
                 loadedModelPath = resolvedPath
                 activeBackendType = "CPU"
-                Log.d(tag, "[OK] CPU backend initialized successfully")
+                Log.d(tag, "[OK] Universal CPU backend initialized successfully")
                 return true
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(tag, "Failed to initialize LiteRT-LM engine: ${e.message}", e)
             closeSession()
             return false
@@ -877,17 +929,95 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                     }
                 }
 
-                localSession.generateContentStream(
-                    listOf(InputData.Text(effectivePrompt)),
-                    callback
-                )
+                var sessionError: Throwable? = null
+                try {
+                    localSession.generateContentStream(
+                        listOf(InputData.Text(effectivePrompt)),
+                        callback
+                    )
 
-                if (!completionLatch.await(10, TimeUnit.MINUTES)) {
-                    localSession.cancelProcess()
-                    throw IllegalStateException("LiteRT-LM response timed out.")
+                    if (!completionLatch.await(10, TimeUnit.MINUTES)) {
+                        localSession.cancelProcess()
+                        throw IllegalStateException("LiteRT-LM response timed out.")
+                    }
+
+                    if (callbackError != null) {
+                        sessionError = callbackError
+                    }
+                } catch (t: Throwable) {
+                    sessionError = t
                 }
 
-                callbackError?.let { throw it }
+                if (sessionError != null) {
+                    val errorToThrow = sessionError
+                    val currentText = synchronized(responseBuilder) { responseBuilder.toString().trim() }
+                    if (activeBackendType == "GPU" && currentText.isBlank() && errorToThrow !is CancellationException) {
+                        Log.w(tag, "GPU generation failed on first token (${errorToThrow.message}). Falling back to CPU at runtime...")
+                        try {
+                            try { localSession.close() } catch (_: Exception) {}
+                            closeSession()
+                            val path = loadedModelPath ?: findGemmaModelFile()?.absolutePath ?: ""
+                            val cpuConfig = EngineConfig(
+                                modelPath = path,
+                                backend = Backend.CPU(),
+                                maxNumTokens = getMaxModelTokens(),
+                                cacheDir = reactApplicationContext.cacheDir.absolutePath,
+                            )
+                            val cpuEngine = Engine(cpuConfig)
+                            cpuEngine.initialize()
+                            engine = cpuEngine
+                            loadedModelPath = path
+                            activeBackendType = "CPU"
+
+                            val cpuSession = cpuEngine.createSession(
+                                SessionConfig(createSamplerConfig(language, isMathRequest))
+                            )
+                            activeSession = cpuSession
+                            val retryLatch = CountDownLatch(1)
+                            val retryHandled = AtomicBoolean(false)
+                            var retryError: Throwable? = null
+
+                            cpuSession.generateContentStream(
+                                listOf(InputData.Text(effectivePrompt)),
+                                object : ResponseCallback {
+                                    override fun onNext(response: String) {
+                                        if (retryHandled.get() || response.isBlank()) return
+                                        synchronized(responseBuilder) {
+                                            val merged = mergeChunk(responseBuilder.toString(), response)
+                                            responseBuilder.clear()
+                                            responseBuilder.append(merged)
+                                            emitGenerationEvent(chunkEvent, requestId, merged)
+                                        }
+                                    }
+                                    override fun onDone() {
+                                        if (retryHandled.compareAndSet(false, true)) {
+                                            val finalT = synchronized(responseBuilder) { responseBuilder.toString() }
+                                            emitGenerationEvent(doneEvent, requestId, sanitizeFinalOutput(finalT, isMathRequest))
+                                            retryLatch.countDown()
+                                        }
+                                    }
+                                    override fun onError(retryThrowable: Throwable) {
+                                        if (retryHandled.compareAndSet(false, true)) {
+                                            retryError = retryThrowable
+                                            retryLatch.countDown()
+                                        }
+                                    }
+                                }
+                            )
+                            retryLatch.await(10, TimeUnit.MINUTES)
+                            try { cpuSession.close() } catch (_: Exception) {}
+                            if (retryError != null) throw retryError!!
+                            val finalRetryText = synchronized(responseBuilder) { responseBuilder.toString().trim() }
+                            promise.resolve(sanitizeFinalOutput(finalRetryText, isMathRequest))
+                            return@execute
+                        } catch (cpuEx: Throwable) {
+                            Log.e(tag, "Runtime CPU fallback failed: ${cpuEx.message}", cpuEx)
+                            throw errorToThrow
+                        }
+                    } else {
+                        throw errorToThrow
+                    }
+                }
 
                 // --- Record performance metrics ---
                 val elapsedMs = System.currentTimeMillis() - inferenceStartTime

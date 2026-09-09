@@ -25,3 +25,20 @@
 -keepclasseswithmembers class * {
     native <methods>;
 }
+
+# react-native-svg
+-keep class com.horcrux.svg.** { *; }
+-keepclassmembers class com.horcrux.svg.** { *; }
+
+# RevenueCat
+-keep class com.revenuecat.purchases.** { *; }
+
+# ONNX Runtime
+-keep class ai.onnxruntime.** { *; }
+
+# ML Kit
+-keep class com.google.mlkit.** { *; }
+
+# Local app modules
+-keep class com.anonymous.guru.** { *; }
+
