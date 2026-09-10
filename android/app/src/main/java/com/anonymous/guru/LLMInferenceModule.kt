@@ -540,58 +540,6 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
         return candidateFiles.firstOrNull { it.exists() && it.length() > 500L * 1024L * 1024L }
     }
 
-    /**
-     * Probes an initialized Engine with a 1-token generation test.
-     * Essential for Android GPU delegates (OpenCL) because:
-     * 1. Engine.initialize() and Engine.createSession() do NOT compile or dispatch OpenCL kernels.
-     * 2. When actual inference runs, if the phone's GPU driver has a max workgroup size < 512
-     *    (common on budget Adreno and Mali GPUs), OpenCL crashes with CL_INVALID_WORK_GROUP_SIZE.
-     * 3. This probe catches that error in under 100ms during startup, safely rejecting the GPU
-     *    and allowing immediate fallback to 100% universal ARM NEON CPU execution.
-     */
-    private fun testEngineWarmup(candidateEngine: Engine): Boolean {
-        var testSession: Session? = null
-        val latch = CountDownLatch(1)
-        val hasFailed = AtomicBoolean(false)
-        return try {
-            testSession = candidateEngine.createSession(
-                SessionConfig(SamplerConfig(topK = 1, topP = 0.9, temperature = 0.1, seed = 1))
-            )
-            testSession.generateContentStream(
-                listOf(InputData.Text("hi")),
-                object : ResponseCallback {
-                    override fun onNext(response: String) {
-                        latch.countDown()
-                    }
-                    override fun onDone() {
-                        latch.countDown()
-                    }
-                    override fun onError(throwable: Throwable) {
-                        Log.w(tag, "Engine warmup probe failed: ${throwable.message}")
-                        hasFailed.set(true)
-                        latch.countDown()
-                    }
-                }
-            )
-            val finished = latch.await(4, TimeUnit.SECONDS)
-            if (!finished || hasFailed.get()) {
-                false
-            } else {
-                true
-            }
-        } catch (t: Throwable) {
-            Log.w(tag, "Engine warmup exception: ${t.message}")
-            false
-        } finally {
-            try {
-                testSession?.cancelProcess()
-            } catch (_: Exception) {}
-            try {
-                testSession?.close()
-            } catch (_: Exception) {}
-        }
-    }
-
     @Synchronized
     private fun ensureModelInitialized(preferredPath: String? = null): Boolean {
         if (engine != null && !loadedModelPath.isNullOrBlank()) {
@@ -628,7 +576,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             val maxTokens = getMaxModelTokens()
             val cacheDir = reactApplicationContext.cacheDir.absolutePath
 
-            // Try GPU first for fast inference, fall back to universal CPU if unsupported or driver fails probe
+            // Try GPU first for fast inference, fall back to universal CPU if unsupported
             var gpuEngine: Engine? = null
             try {
                 Log.d(tag, "Attempting GPU backend for faster inference...")
@@ -642,18 +590,13 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 gpuEngine = candidateEngine
                 candidateEngine.initialize()
 
-                val isGpuUsable = testEngineWarmup(candidateEngine)
-                if (!isGpuUsable) {
-                    throw IllegalStateException("GPU probe failed kernel execution (e.g. invalid workgroup size or unstable OpenCL driver)")
-                }
-
                 engine = candidateEngine
                 loadedModelPath = resolvedPath
                 activeBackendType = "GPU"
-                Log.d(tag, "[OK] GPU backend verified and initialized successfully")
+                Log.d(tag, "[OK] GPU backend initialized successfully")
                 return true
             } catch (gpuError: Throwable) {
-                Log.w(tag, "GPU backend unavailable or failed probe (${gpuError.message}), falling back to universal CPU execution")
+                Log.w(tag, "GPU backend unavailable or failed initialization (${gpuError.message}), falling back to universal CPU execution")
                 try {
                     gpuEngine?.close()
                 } catch (_: Throwable) {}

@@ -26,9 +26,11 @@
     native <methods>;
 }
 
-# react-native-svg
+# react-native-svg & viewmanagers
 -keep class com.horcrux.svg.** { *; }
 -keepclassmembers class com.horcrux.svg.** { *; }
+-keep class com.facebook.react.viewmanagers.** { *; }
+-keep interface com.facebook.react.viewmanagers.** { *; }
 
 # RevenueCat
 -keep class com.revenuecat.purchases.** { *; }

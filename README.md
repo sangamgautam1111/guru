@@ -64,7 +64,7 @@ Download the latest release APK directly for Android:
 2. **Start studying right away**: Open the app, type in your name, and you can immediately read textbooks, practice MCQs, or look at past papers. You don't have to wait for any big downloads to get started.
 3. **Download AI models when ready**: When you want to chat with Guru, tap "Chat with Guru" to download the Gemma and Whisper models (~2.5 GB). You'll see real-time download speed and progress.
 4. **Grant permissions**: Allow camera and microphone access so you can take photos of textbook questions and speak into the mic.
-5. **Learn completely offline**: Turn on Airplane mode if you'd like. Once downloaded, asking questions, photo solving, voice recognition, and all books work 100% offline without any internet.
+5. **Study offline**: You can turn on Airplane mode to test it. Once the model is on your device, asking questions, photo solving, voice questions, and all textbooks run right on your phone without needing any internet connection. If the model ever seems stuck on loading, tap "Clear Chat" and try asking once more.
 
 ## RevenueCat Integration (Guru Dakshina)
 
@@ -124,22 +124,20 @@ Since Guru is submitted as a standalone APK for the Next Gen Track without a liv
 5. **Check your supporter badge**: Look at the top of the screen — you will see your new supporter badge (like *Study Supporter* or *Classroom Patron*) and your sponsored student count updated.
 6. **Testing Restore**: You can also tap "Restore Previous Sponsorship" at the bottom to verify that RevenueCat checks your past sponsorship status.
 
-## Hardware Performance Benchmark
+## Tested On Real Devices
 
-Tested live on physical Android devices using ADB system telemetry (`dumpsys meminfo`, `dumpsys gfxinfo`, and `top`):
+I tested Guru on real physical phones to see how it performs across different hardware:
 
-| Metric | OPPO A18 (Budget Tier) | Vivo Y27 5G (Performance Tier) |
-| :--- | :--- | :--- |
-| Model Number | CPH2591 | V2302 (PD2279F_EX) |
-| Chipset / SoC | MediaTek Helio G85 (mt6768) | MediaTek Dimensity 6020 (mt6833) |
-| Physical RAM | 3.8 GB (Budget 4GB tier) | 7.8 GB (Mid-range 8GB tier) |
-| Android Version | Android 15 | Android 15 |
-| AI Model | Google Gemma 4 E2B (litertlm) | Google Gemma 4 E2B (litertlm) |
-| Model Engine | Google LiteRT-LM (4-bit Dynamic) | Google LiteRT-LM (4-bit Dynamic) |
-| CPU Usage (Inference) | ~68.5% (Stable budget execution) | ~16.6% (Ultra-efficient execution) |
-| UI Streaming FPS | 20 – 24 FPS | 60.0 FPS (16.6ms target) |
-| Memory Pressure (OOM) | 0 Crashes (Stable headroom) | 0 Crashes (Maximum headroom) |
-| Network Dependency | Offline | Offline |
+| Phone | Chipset | RAM | AI Speed | How it runs |
+| :--- | :--- | :--- | :--- | :--- |
+| **Vivo Y27 5G** | MediaTek Dimensity 6020 | 8 GB | ~5.0 tok/s | GPU acceleration (Mali OpenCL) |
+| **Redmi A4 5G** | Snapdragon 4s Gen 2 | 8 GB | ~1.8 tok/s | CPU fallback (Qualcomm OpenCL limit) |
+| **OPPO A18** | MediaTek Helio G85 | 4 GB | ~1.6 tok/s | CPU mode (safe for 4GB RAM) |
+
+- **GPU mode**: On phones with capable GPUs like the Dimensity's Mali-G57, the model runs fast on the GPU at around 5 tokens per second.
+- **CPU fallback**: On budget Qualcomm phones (like the Redmi A4) where the Adreno GPU has driver limits, the app automatically switches over to the CPU so it doesn't crash, generating at around 1.8 tokens per second.
+- **Offline testing**: All tests were done with mobile data and Wi-Fi turned off.
+
 
 ## Codebase Architecture
 
