@@ -1,66 +1,79 @@
 # Native Android Engine (`android/`)
 
-This directory houses the native Kotlin and C++ layer of Guru. 
+This directory contains the native Android code (Kotlin and C++) that powers Guru.
 
-When building an offline AI tutor for students in rural Nepal, React Native alone simply couldn't cut it. Standard JavaScript runtimes cannot load multi-gigabyte neural weights into memory, interface with hardware shader pipelines, or survive the aggressive background battery managers common on budget Android phones.
+When I started building Guru, I tried doing everything in pure React Native. But running a 2.5 GB local AI model on a budget phone isn't possible in plain JavaScript. A phone needs to load heavy neural weights directly into RAM, work with OpenCL GPU shaders or ARM NEON CPU instructions, and stay alive even when Android tries to kill background tasks to save battery.
 
-To solve this, I wrote custom native Android modules that interface directly with device hardware, Google's LiteRT-LM C++ runtime, ONNX Runtime, and core Android system services.
+To make this work on the actual phones students use in Nepal, I built custom native modules in Kotlin that talk directly to device hardware, Google's LiteRT-LM runtime, and Android system services.
 
 ---
 
-## Architecture Overview
+## How It's Structured
 
 ```
-React Native Bridge (JNI)
+React Native UI (ChatModal / useChat)
+       │ (JNI Bridge)
+       ├── LLMInferenceModule.kt
+       │      ├── LiteRT-LM (Gemma 2B INT4)
+       │      │     ├── GPU Backend (OpenCL via Mali-G57)
+       │      │     └── CPU Fallback (ARM NEON for Snapdragon / low-RAM)
+       │      ├── ONNX Runtime (Whisper speech-to-text)
+       │      ├── Google ML Kit (Textbook photo OCR)
+       │      ├── Android PdfRenderer (Fast, native textbook reading)
+       │      └── Android TextToSpeech (Reads answers out loud)
        │
-       ├── LLMInferenceModule.kt ──> LiteRT-LM (Google Gemma 4 E2B)
-       │                         ──> ONNX Runtime (Whisper Voice)
-       │                         ──> Google ML Kit (Textbook OCR)
-       │                         ──> Android Native PdfRenderer
-       │                         ──> Android Neural Text-To-Speech
-       │
-       └── ModelDownloadService.kt ──> Foreground Service (Resumable 2.5 GB downloads)
-                                   ──> WakeLock & High-Perf WifiLock
+       └── ModelDownloadService.kt
+              ├── Foreground Service (keeps downloading when screen locks)
+              ├── HTTP Range Resumes (doesn't restart if Wi-Fi drops)
+              └── WakeLock & WifiLock (stops phone from sleeping during download)
 ```
 
 ---
 
-## Deep Dive: How the Native Components Work
+## What the Native Code Does
 
-### 1. `LLMInferenceModule.kt` (The On-Device AI Engine)
+### 1. `LLMInferenceModule.kt` — The Offline AI Brain
 
-This is the core native module (over 2,000 lines of Kotlin) that turns a student's phone into an autonomous AI classroom without needing the internet.
+This is the main native module (~2,000 lines of Kotlin). It handles loading the model, running inference, and making sure the app never freezes or crashes:
 
-- **LiteRT-LM C++ Runtime Integration**: The native module dynamically loads the 4-bit quantized Google Gemma model weights (`.litertlm` format) straight into physical RAM.
-- **Dynamic Hardware Negotiation (GPU vs CPU)**: Many phones in Nepal run budget MediaTek chipsets (like the Helio G85) where GPU shader compilation for LLMs can either fail or cause driver crashes. The module checks hardware capabilities on startup. If OpenCL/Vulkan GPU acceleration is safe, it routes computation to the GPU; otherwise, it smoothly falls back to multi-threaded CPU execution with NEON vector math.
-- **Low-Memory (OOM) Protection**: Phones with 3 GB or 4 GB RAM will quickly kill apps that exceed memory boundaries. The module monitors system memory pressure using `ActivityManager.MemoryInfo`, dynamically scales the context window (capping at 2,048 tokens on budget hardware), and runs clean garbage-collection sweeps between inference runs.
-- **Repetition Loop Breaker**: Quantized models can occasionally get stuck repeating tokens when answering complex questions. I built an on-the-fly n-gram ring buffer in Kotlin that monitors incoming tokens in real time. If a repeating loop is detected, it terminates the stream cleanly and presents a complete, coherent answer.
-- **Native PDF Renderer**: Instead of bundling heavy third-party PDF engines that bloat the APK and lag on budget phones, it taps directly into Android's native `android.graphics.pdf.PdfRenderer`. It renders textbook pages into smooth hardware-accelerated bitmaps.
-- **Offline Voice and Vision**:
-  - **OCR**: Integrated Google ML Kit Latin Text Recognition for fast extraction of question text from camera photos.
-  - **Voice (Whisper)**: Quantized speech-to-text running via ONNX Runtime so students can ask questions by speaking naturally.
-  - **TTS**: Android's built-in `TextToSpeech` engine configured with Nepali and English language profiles to read solutions out loud.
+- **GPU First, Safe CPU Fallback**:
+  When testing across different phones, I ran into an interesting hardware reality:
+  - On phones like the **Vivo Y27 5G** (Dimensity 6020 / Mali GPU), OpenCL workgroups of 512 work great, giving around **5 tokens/sec**.
+  - On budget Qualcomm chips like the **Redmi A4 5G** (Snapdragon 4s Gen 2 / Adreno GPU), the OpenCL driver only supports workgroups up to 256. LiteRT crashes if you force it onto the GPU.
+  - To solve this, the module catches GPU initialization and driver errors automatically and falls back to multi-threaded CPU execution (ARM NEON) at ~1.8 tokens/sec. The student never sees a crash or an error popup—it just works.
 
-### 2. `ModelDownloadService.kt` (Surviving Unstable Wi-Fi)
+- **Background Worker Queue**:
+  All C++ inference runs on a dedicated single-thread background executor. This keeps the Android UI thread at 60 FPS so scrolling and typing stay completely smooth while the model is thinking.
 
-Downloading 2.5 GB of AI model weights on slow, spotty Wi-Fi in Nepal was one of the hardest problems to solve. A single network hiccup or screen lock could ruin an hour-long download. 
+- **Loop Breaker for Quantized Weights**:
+  4-bit quantized models can sometimes repeat phrases when writing long step-by-step math answers. I wrote an n-gram repetition detector that checks streaming tokens in real time. If a repeating loop is caught, it cleanly stops generation and keeps the good part of the answer.
 
-Here is how I built the downloader to be rock-solid:
+- **Memory Management**:
+  Before loading the model, the module checks available RAM. On phones with 4 GB of RAM, it limits the context window to 2,048 tokens and cleans up sessions after each prompt to prevent Android from killing the app.
 
-- **HTTP `Range` Header Resumes**: The service writes chunks directly to disk using `RandomAccessFile`. If the connection drops at 1.8 GB, it doesn't start over. It inspects the existing byte count on disk and sends a `Range: bytes=X-` request, resuming from the exact byte where it paused.
-- **Foreground Service with Persistent Notification**: Runs as an official Android `ForegroundService` with notification priority, so the operating system never kills the download process to reclaim memory.
-- **WakeLock & WifiLock Protection**: Acquires `PowerManager.PARTIAL_WAKE_LOCK` and `WifiManager.WIFI_MODE_FULL_HIGH_PERF`. This prevents Android's aggressive battery optimizations (Doze mode) from putting the Wi-Fi radio to sleep when the student locks their screen.
-- **Exponential Backoff Reconnects**: Tries up to 50 times with progressive delays to silently reconnect through load shedding power cuts and router restarts.
-- **Live Streamed Telemetry**: Emits live download speed (KB/s and MB/s), downloaded bytes, and remaining ETA events to the React Native UI.
+- **Built-in OCR, Voice, and Books**:
+  - **Camera OCR**: Uses Google ML Kit to pull text from photos of textbook questions.
+  - **Whisper Voice**: Runs a quantized speech model via ONNX Runtime so students can ask questions by speaking.
+  - **Native PDF Reading**: Uses Android's native `PdfRenderer` instead of heavy npm PDF packages, keeping memory light while scrolling CDC textbooks.
+
+### 2. `ModelDownloadService.kt` — Surviving Spotty Village Wi-Fi
+
+Downloading a ~2.5 GB model file over rural Wi-Fi in Nepal is tough. The power can cut out, or the Wi-Fi can drop midway through:
+
+- **Resume from where it stopped**: Uses HTTP `Range` headers. If a download drops at 1.7 GB, it checks the file on disk and resumes from byte 1.7 GB instead of starting from zero.
+- **Foreground Service**: Runs with an ongoing notification so Android's memory manager won't kill it in the background.
+- **WakeLock & High-Performance WifiLock**: Keeps the Wi-Fi antenna and CPU active so the download keeps running even when the screen turns off.
+- **Auto-Reconnect**: Tries reconnecting up to 50 times with exponential backoff if the router restarts or power drops temporarily.
 
 ---
 
-## Build Configuration & SDK Targets
+## Build Targets
 
 - **Target SDK**: 35 (Android 15)
 - **Compile SDK**: 34
 - **Build Tools**: 34.0.0
 - **NDK Version**: 26.1.10909125
 - **Kotlin Version**: 2.0.21
-- **ABI Filters**: `arm64-v8a`, `armeabi-v7a`
+- **ABIs**: `arm64-v8a`, `armeabi-v7a`
+
 
