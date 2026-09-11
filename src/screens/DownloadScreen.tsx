@@ -29,6 +29,8 @@ interface DownloadScreenProps {
   gemmaStatus: ModelFileStatus;
   whisperStatus: ModelFileStatus;
   isAllModelsReady: boolean;
+  isModelReady?: boolean;
+  isInitializingModel?: boolean;
   isDownloading: boolean;
   downloadProgress: number;
   downloadSpeed: string;
@@ -50,6 +52,8 @@ export const DownloadScreen: React.FC<DownloadScreenProps> = ({
   gemmaStatus,
   whisperStatus,
   isAllModelsReady,
+  isModelReady = false,
+  isInitializingModel = false,
   isDownloading,
   downloadProgress,
   downloadSpeed,
@@ -244,6 +248,18 @@ export const DownloadScreen: React.FC<DownloadScreenProps> = ({
                 </Text>
               </TouchableOpacity>
             </View>
+          ) : (isInitializingModel || (gemmaStatus.found && !isModelReady)) ? (
+            <View style={{ width: '100%', alignItems: 'center' }}>
+              <View style={[styles.startLearningPrimaryBtn, styles.downloadingButtonBox]}>
+                <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 10 }} />
+                <Text style={[styles.startLearningPrimaryBtnText, { color: '#ffffff' }]}>
+                  Binding AI Brain to Phone RAM...
+                </Text>
+              </View>
+              <Text style={{ fontSize: 12, color: '#a1a1aa', marginTop: 8, textAlign: 'center' }}>
+                Pre-warming neural weights into memory for instant first answer
+              </Text>
+            </View>
           ) : isAllReady ? (
             <TouchableOpacity
               style={styles.startLearningPrimaryBtn}
@@ -251,7 +267,7 @@ export const DownloadScreen: React.FC<DownloadScreenProps> = ({
               activeOpacity={0.85}
             >
               <Check size={19} color="#000000" style={{ marginRight: 8 }} />
-              <Text style={styles.startLearningPrimaryBtnText}>Enter Chat</Text>
+              <Text style={styles.startLearningPrimaryBtnText}>Enter Guru</Text>
               <ArrowRight size={18} color="#000000" style={{ marginLeft: 8 }} />
             </TouchableOpacity>
           ) : (

@@ -86,6 +86,28 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
     // but many budget phones in Nepal (MediaTek Helio G85, etc.) lack stable GPU drivers
     // for LLM workloads, so we always keep CPU as a reliable fallback.
     @Volatile private var activeBackendType: String = "CPU"
+    @Volatile private var isGpuKnownBroken: Boolean = false
+
+    private fun isGpuDisabled(): Boolean {
+        if (isGpuKnownBroken) return true
+        return try {
+            val prefs = reactApplicationContext.getSharedPreferences("guru_engine_prefs", Context.MODE_PRIVATE)
+            val disabled = prefs.getBoolean("gpu_unsupported", false)
+            if (disabled) isGpuKnownBroken = true
+            disabled
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun markGpuUnsupported() {
+        isGpuKnownBroken = true
+        try {
+            val prefs = reactApplicationContext.getSharedPreferences("guru_engine_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("gpu_unsupported", true).apply()
+            Log.d(tag, "Persisted GPU unsupported preference for this device")
+        } catch (_: Exception) {}
+    }
 
     // Inference performance metrics — exposed to React Native so the UI can optionally
     // show "X tokens/sec" during generation, proving to the student
@@ -576,46 +598,52 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
             val maxTokens = getMaxModelTokens()
             val cacheDir = reactApplicationContext.cacheDir.absolutePath
 
-            // Try GPU first for fast inference, fall back to universal CPU if unsupported
+            // Try GPU first for fast inference (unless previously flagged incompatible on this device),
+            // fall back to universal CPU if unsupported
             var gpuEngine: Engine? = null
-            try {
-                Log.d(tag, "Attempting GPU backend for faster inference...")
-                val gpuConfig = EngineConfig(
-                    modelPath = resolvedPath,
-                    backend = Backend.GPU(),
-                    maxNumTokens = maxTokens,
-                    cacheDir = cacheDir,
-                )
-                val candidateEngine = Engine(gpuConfig)
-                gpuEngine = candidateEngine
-                candidateEngine.initialize()
-
-                engine = candidateEngine
-                loadedModelPath = resolvedPath
-                activeBackendType = "GPU"
-                Log.d(tag, "[OK] GPU backend initialized successfully")
-                return true
-            } catch (gpuError: Throwable) {
-                Log.w(tag, "GPU backend unavailable or failed initialization (${gpuError.message}), falling back to universal CPU execution")
+            if (!isGpuDisabled()) {
                 try {
-                    gpuEngine?.close()
-                } catch (_: Throwable) {}
+                    Log.d(tag, "Attempting GPU backend for faster inference...")
+                    val gpuConfig = EngineConfig(
+                        modelPath = resolvedPath,
+                        backend = Backend.GPU(),
+                        maxNumTokens = maxTokens,
+                        cacheDir = cacheDir,
+                    )
+                    val candidateEngine = Engine(gpuConfig)
+                    gpuEngine = candidateEngine
+                    candidateEngine.initialize()
 
-                val cpuConfig = EngineConfig(
-                    modelPath = resolvedPath,
-                    backend = Backend.CPU(),
-                    maxNumTokens = maxTokens,
-                    cacheDir = cacheDir,
-                )
-                val cpuEngine = Engine(cpuConfig)
-                cpuEngine.initialize()
-
-                engine = cpuEngine
-                loadedModelPath = resolvedPath
-                activeBackendType = "CPU"
-                Log.d(tag, "[OK] Universal CPU backend initialized successfully")
-                return true
+                    engine = candidateEngine
+                    loadedModelPath = resolvedPath
+                    activeBackendType = "GPU"
+                    Log.d(tag, "[OK] GPU backend initialized successfully")
+                    return true
+                } catch (gpuError: Throwable) {
+                    Log.w(tag, "GPU backend unavailable or failed initialization (${gpuError.message}), falling back to universal CPU execution")
+                    markGpuUnsupported()
+                    try {
+                        gpuEngine?.close()
+                    } catch (_: Throwable) {}
+                }
+            } else {
+                Log.d(tag, "Skipping GPU backend (hardware previously flagged incompatible), using universal CPU directly")
             }
+
+            val cpuConfig = EngineConfig(
+                modelPath = resolvedPath,
+                backend = Backend.CPU(),
+                maxNumTokens = maxTokens,
+                cacheDir = cacheDir,
+            )
+            val cpuEngine = Engine(cpuConfig)
+            cpuEngine.initialize()
+
+            engine = cpuEngine
+            loadedModelPath = resolvedPath
+            activeBackendType = "CPU"
+            Log.d(tag, "[OK] Universal CPU backend initialized successfully")
+            return true
         } catch (e: Throwable) {
             Log.e(tag, "Failed to initialize LiteRT-LM engine: ${e.message}", e)
             closeSession()
@@ -788,7 +816,15 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                 fun finishError(throwable: Throwable) {
                     if (completionHandled.compareAndSet(false, true)) {
                         callbackError = throwable
-                        emitGenerationEvent(errorEvent, requestId, error = throwable.message ?: "LiteRT-LM generation failed.")
+                        // IMPORTANT: If GPU failed before generating any text and CPU fallback is possible,
+                        // do NOT emit errorEvent to React Native yet! If we emit errorEvent, React Native
+                        // will clear activeGenerationRef, causing all tokens from the CPU fallback to be dropped.
+                        val canFallbackToCpu = (activeBackendType == "GPU" &&
+                                synchronized(responseBuilder) { responseBuilder.isBlank() } &&
+                                throwable !is CancellationException)
+                        if (!canFallbackToCpu) {
+                            emitGenerationEvent(errorEvent, requestId, error = throwable.message ?: "LiteRT-LM generation failed.")
+                        }
                         completionLatch.countDown()
                     }
                 }
@@ -896,6 +932,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                     val currentText = synchronized(responseBuilder) { responseBuilder.toString().trim() }
                     if (activeBackendType == "GPU" && currentText.isBlank() && errorToThrow !is CancellationException) {
                         Log.w(tag, "GPU generation failed on first token (${errorToThrow.message}). Falling back to CPU at runtime...")
+                        markGpuUnsupported()
                         try {
                             try { localSession.close() } catch (_: Exception) {}
                             closeSession()
@@ -925,6 +962,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                                 object : ResponseCallback {
                                     override fun onNext(response: String) {
                                         if (retryHandled.get() || response.isBlank()) return
+                                        tokenCounter.incrementAndGet()
                                         synchronized(responseBuilder) {
                                             val merged = mergeChunk(responseBuilder.toString(), response)
                                             responseBuilder.clear()
@@ -942,6 +980,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                                     override fun onError(retryThrowable: Throwable) {
                                         if (retryHandled.compareAndSet(false, true)) {
                                             retryError = retryThrowable
+                                            emitGenerationEvent(errorEvent, requestId, error = retryThrowable.message ?: "CPU generation failed.")
                                             retryLatch.countDown()
                                         }
                                     }
@@ -955,6 +994,7 @@ class LLMInferenceModule(reactContext: ReactApplicationContext) : ReactContextBa
                             return@execute
                         } catch (cpuEx: Throwable) {
                             Log.e(tag, "Runtime CPU fallback failed: ${cpuEx.message}", cpuEx)
+                            emitGenerationEvent(errorEvent, requestId, error = cpuEx.message ?: "Inference failed.")
                             throw errorToThrow
                         }
                     } else {

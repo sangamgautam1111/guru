@@ -93,10 +93,21 @@ export function useChat(
       }
     );
 
-    const errorSub = DeviceEventEmitter.addListener('LiteRTResponseError', () => {
-      setIsGenerating(false);
-      activeGenerationRef.current = null;
-    });
+    const errorSub = DeviceEventEmitter.addListener(
+      'LiteRTResponseError',
+      (event: { requestId?: string; error?: string }) => {
+        const active = activeGenerationRef.current;
+        if (active && (!event?.requestId || event.requestId === active.requestId)) {
+          updateAssistantMessage(
+            active.messageId,
+            'I am ready! Please ask your question again or send a photo from your textbook.',
+            false
+          );
+        }
+        setIsGenerating(false);
+        activeGenerationRef.current = null;
+      }
+    );
 
     return () => {
       chunkSub.remove();

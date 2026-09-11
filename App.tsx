@@ -96,6 +96,7 @@ export default function App() {
     whisperStatus,
     isAllModelsReady,
     isModelReady,
+    isInitializingModel,
     setIsModelReady,
     modelReadyRef,
     verifyAllModels,
@@ -149,21 +150,20 @@ export default function App() {
   const finishDownloadAndEnterMain = useCallback(async () => {
     try {
       await AsyncStorage.setItem('@guru_resources_ready', 'true');
-      setScreen('main');
-      setIsChatModalOpen(true);
       if (Platform.OS === 'android' && NativeModules.LLMInferenceModule?.checkAllModelsStatus) {
         const res = await NativeModules.LLMInferenceModule.checkAllModelsStatus();
         if (res?.gemmaPath) {
           await AsyncStorage.setItem(STORAGE_KEYS.modelPath, res.gemmaPath);
-          showToast('Offline AI Brain ready!');
-          try {
-            await NativeModules.LLMInferenceModule.initModel(res.gemmaPath);
-            setIsModelReady(true);
-            modelReadyRef.current = true;
-          } catch (initErr) {
-            console.warn('Model init deferred:', initErr);
+          if (!modelReadyRef.current) {
+            showToast('Finalizing AI Brain setup...');
+            try {
+              await NativeModules.LLMInferenceModule.initModel(res.gemmaPath);
+              setIsModelReady(true);
+              modelReadyRef.current = true;
+            } catch (initErr) {
+              console.warn('Model init deferred:', initErr);
+            }
           }
-          return;
         }
       }
     } catch (_) {}
@@ -288,6 +288,8 @@ export default function App() {
         gemmaStatus={gemmaStatus}
         whisperStatus={whisperStatus}
         isAllModelsReady={isAllModelsReady}
+        isModelReady={isModelReady}
+        isInitializingModel={isInitializingModel}
         isDownloading={isDownloading}
         downloadProgress={downloadProgress}
         downloadSpeed={downloadSpeed}

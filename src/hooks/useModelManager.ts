@@ -27,6 +27,7 @@ export function useModelManager(showToast: (msg: string) => void) {
   const [isAllModelsReady, setIsAllModelsReady] = useState(false);
   const [isCheckingModels, setIsCheckingModels] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
+  const [isInitializingModel, setIsInitializingModel] = useState(false);
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const modelReadyRef = useRef(false);
 
@@ -57,11 +58,15 @@ export function useModelManager(showToast: (msg: string) => void) {
           }
           if (res.gemmaPath) {
             try {
+              setIsInitializingModel(true);
               await AsyncStorage.setItem(STORAGE_KEYS.modelPath, res.gemmaPath);
               await NativeModules.LLMInferenceModule.initModel(res.gemmaPath);
               setIsModelReady(true);
               modelReadyRef.current = true;
-            } catch (_) {}
+            } catch (_) {
+            } finally {
+              setIsInitializingModel(false);
+            }
           }
         }
       }
@@ -116,9 +121,11 @@ export function useModelManager(showToast: (msg: string) => void) {
       } else if (data.status === 'done') {
         setIsDownloading(false);
         setDownloadProgress(100);
+        setIsInitializingModel(true);
         void verifyAllModels();
       } else if (data.status === 'error') {
         setIsDownloading(false);
+        setIsInitializingModel(false);
         showToast('Download notice: ' + (data.error || 'Network error'));
         if (data.error && data.error.includes('401')) {
           setShowHfTokenInput(true);
@@ -152,8 +159,9 @@ export function useModelManager(showToast: (msg: string) => void) {
             setIsAllModelsReady(true);
             setDownloadProgress(100);
             setIsDownloading(false);
+            setIsInitializingModel(true);
             await verifyAllModels();
-            showToast('Download complete! Tap "Enter Chat" to start.');
+            showToast('Offline AI Brain ready! Tap "Enter Guru" to begin.');
           }
         } else {
           setIsDownloading(false);
@@ -237,6 +245,7 @@ export function useModelManager(showToast: (msg: string) => void) {
     isAllModelsReady,
     isCheckingModels,
     isModelReady,
+    isInitializingModel,
     setIsModelReady,
     isTestingVoice,
     modelReadyRef,
