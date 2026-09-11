@@ -132,11 +132,12 @@ I tested Guru on real physical phones to see how it performs across different ha
 | :--- | :--- | :--- | :--- | :--- |
 | **Vivo Y27 5G** | MediaTek Dimensity 6020 | 8 GB | ~5.0 tok/s | GPU acceleration (Mali OpenCL) |
 | **Redmi A4 5G** | Snapdragon 4s Gen 2 | 8 GB | ~1.8 tok/s | CPU fallback (Qualcomm OpenCL limit) |
+| **Realme C51/C53** | Unisoc Tiger T612 | 4 GB | ~1.6 tok/s | GPU acceleration (Mali OpenCL, 1.67 GB PSS) |
 | **OPPO A18** | MediaTek Helio G85 | 4 GB | ~1.6 tok/s | CPU mode (safe for 4GB RAM) |
 
-- **GPU mode**: On phones with capable GPUs like the Dimensity's Mali-G57, the model runs fast on the GPU at around 5 tokens per second.
-- **CPU fallback**: On budget Qualcomm phones (like the Redmi A4) where the Adreno GPU has driver limits, the app automatically switches over to the CPU so it doesn't crash, generating at around 1.8 tokens per second.
-- **Offline testing**: All tests were done with mobile data and Wi-Fi turned off.
+- **GPU mode**: On phones with capable GPUs (like the Dimensity 6020 and Unisoc T612 with Mali-G57), the model runs directly on the GPU using OpenCL.
+- **CPU fallback**: On budget Qualcomm phones (like the Redmi A4) where the Adreno GPU has driver workgroup limits, the app automatically switches over to ARM NEON CPU execution without dropping requests, generating at around 1.8 tokens per second.
+- **Offline testing**: All tests were conducted with airplane mode enabled (zero Wi-Fi and zero mobile data).
 
 
 ## Codebase Architecture

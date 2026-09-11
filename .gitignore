@@ -16,3 +16,4 @@ litertm_file/
 *.litertlm
 *.keystore
 screen*.png
+.kotlin/
