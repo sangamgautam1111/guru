@@ -144,6 +144,103 @@ I tested Guru on real physical phones to see how it performs across different ha
 
 Originally, Guru was built as a single 5,400-line prototype in `App.tsx`. To keep the code clean, reliable, and easy to maintain, I refactored the entire application into a modular architecture under `src/`:
 
+```mermaid
+flowchart TB
+    %% ============================================================
+    %% GURU SYSTEM ARCHITECTURE · 100% ON-DEVICE EDGE AI ENGINE
+    %% ============================================================
+
+    subgraph CLIENT ["📱 Client Layer · React Native & TypeScript"]
+        direction TB
+        INPUTS["<b>Tri-Modal Input Engine</b><br/>• LaTeX Keyboard Typing<br/>• Google ML Kit Camera OCR<br/>• Whisper On-Device STT"]
+        
+        UI["<b>UI & Orchestration (~370 LOC)</b><br/>App.tsx · Home · Revision · Chat · Dakshina"]
+        
+        HOOKS["<b>Domain Hooks & State Separation</b><br/>useChat · useDakshina · useModelManager · useQuiz · usePdfViewer"]
+        
+        INPUTS --> UI
+        UI --> HOOKS
+    end
+
+    subgraph MONETIZATION ["💖 Ethical Patron Engine · RevenueCat SDK"]
+        direction TB
+        RC_SVC["<b>RevenueCatService.ts</b><br/>Production Key (goog_...) · Offline Pre-Flight Guard"]
+        RC_PURCHASE["<b>Micro-Sponsorships ($1 - $20)</b><br/>1-Kit Sponsor · Classroom Patron · Benefactor"]
+        RC_ATTRS["<b>Customer Attributes Sync</b><br/>Lifetime Kits · Sponsor Tier Badge · Donor History"]
+        
+        RC_SVC --> RC_PURCHASE
+        RC_PURCHASE --> RC_ATTRS
+    end
+
+    subgraph NATIVE ["⚙️ Native Android Engine · Kotlin & Custom JNI"]
+        direction TB
+        JNI["<b>LLMInferenceModule.kt</b><br/>Custom JNI Bridge · Token Stream Dispatcher"]
+        BG_SVC["<b>ModelDownloadService.kt</b><br/>Foreground Service · Android WakeLocks · Byte-Range Resume"]
+        RAM_GATE["<b>RAM-Binding Gate</b><br/>Pre-warms weights · Guarantees zero-lag entry"]
+        
+        BG_SVC --> RAM_GATE
+        RAM_GATE --> JNI
+    end
+
+    subgraph ENGINE ["🧠 Edge AI Engine · Google LiteRT-LM (C++)"]
+        direction TB
+        MODEL["<b>Gemma 4 E2B IT Model</b><br/>INT4 Quantized (~2.5 GB) · Local Storage"]
+        MEM["<b>Dynamic Memory Allocator</b><br/>1.67 GB PSS Allocation · 2,048 Token Context"]
+        ROUTER{"<b>Hardware Compute Router</b><br/>Checks Driver OpenCL Workgroups & RAM"}
+        
+        MODEL --> MEM
+        MEM --> ROUTER
+    end
+
+    subgraph COMPUTE ["⚡ Dual Hardware Dispatch (100% Airplane Mode)"]
+        direction TB
+        GPU["<b>OpenCL GPU Acceleration</b><br/>Mali-G57 Pipeline (Vivo Y27, Realme C51/C53)<br/><b>~5.0 tok/s</b> · Native Mobile GPU Execution"]
+        
+        CPU["<b>Zero-Drop ARM NEON CPU Fallback</b><br/>Adreno 619 & Helio G85 (Redmi A4, OPPO A18)<br/><b>~1.8 tok/s</b> · Status 13 Workgroup Auto-Failover"]
+        
+        ROUTER -->|Capable GPU Driver| GPU
+        ROUTER -->|Workgroup Limit Exceeded| CPU
+    end
+
+    subgraph CURRICULUM ["📚 Bundled Curriculum Vault (Zero Cloud Dependency)"]
+        direction TB
+        PDF["<b>Native PDF Engine</b><br/>Instant Page Zoom & Offline Navigation"]
+        BOOKS["<b>7 CDC Textbooks</b><br/>Science · Math · Social · English · Nepali · Opt Math · CS"]
+        SOLUTIONS["<b>SEE 2081 & 2082 Solutions</b><br/>7-Province Board Papers · Step-by-Step Derivations"]
+        MCQ["<b>19-Chapter Science MCQs</b><br/>Instant Verification & Offline Grading"]
+        
+        PDF --> BOOKS
+        PDF --> SOLUTIONS
+        PDF --> MCQ
+    end
+
+    %% Cross-Domain Data Pipelines
+    HOOKS -->|Sponsorship Calls| RC_SVC
+    HOOKS -->|Inference Invocations| JNI
+    HOOKS -->|Background Fetch| BG_SVC
+    UI -->|Instant Local Study| PDF
+    JNI -->|Native C++ Bridge| MODEL
+    GPU -->|Real-Time Token Stream| JNI
+    CPU -->|Real-Time Token Stream| JNI
+
+    %% High-Contrast Theme Styling
+    classDef clientStyle fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#0f172a;
+    classDef nativeStyle fill:#f8fafc,stroke:#475569,stroke-width:2px,color:#0f172a;
+    classDef engineStyle fill:#faf5ff,stroke:#7c3aed,stroke-width:2px,color:#0f172a;
+    classDef computeGpu fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#0f172a;
+    classDef computeCpu fill:#fffbeb,stroke:#d97706,stroke-width:2px,color:#0f172a;
+    classDef rcStyle fill:#fff1f2,stroke:#e11d48,stroke-width:2px,color:#0f172a;
+    classDef curriculumStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#0f172a;
+
+    class INPUTS,UI,HOOKS clientStyle;
+    class JNI,BG_SVC,RAM_GATE nativeStyle;
+    class MODEL,MEM,ROUTER engineStyle;
+    class GPU computeGpu;
+    class CPU computeCpu;
+    class RC_SVC,RC_PURCHASE,RC_ATTRS rcStyle;
+    class PDF,BOOKS,SOLUTIONS,MCQ curriculumStyle;
+```
+
 - **`src/screens/`** — Screen components (`HomeTab`, `RevisionTab`, `ChatModal`, `DownloadScreen`, `OnboardingScreen`, `BootScreen`).
 - **`src/hooks/`** — Custom React hooks separating UI from business logic (`useChat`, `useQuiz`, `useStreak`, `useDakshina`, `useModelManager`, `usePdfViewer`, `useVoiceMode`).
 - **`src/services/`** — RevenueCat integration (`RevenueCatService.ts`), native AI engine bridges (`GemmaRunner.ts`), and curriculum syllabus memory.
