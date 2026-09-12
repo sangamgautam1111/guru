@@ -137,7 +137,7 @@ I tested Guru on real physical phones to see how it performs across different ha
 
 - **GPU mode**: On phones with capable GPUs (like the Dimensity 6020 and Unisoc T612 with Mali-G57), the model runs directly on the GPU using OpenCL.
 - **CPU fallback**: On budget Qualcomm phones (like the Redmi A4) where the Adreno GPU has driver workgroup limits, the app automatically switches over to ARM NEON CPU execution without dropping requests, generating at around 1.8 tokens per second.
-- **Offline testing**: All tests were conducted with airplane mode enabled (zero Wi-Fi and zero mobile data).
+
 
 
 ## Codebase Architecture
