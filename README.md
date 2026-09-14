@@ -8,7 +8,7 @@
 [![Status](https://img.shields.io/badge/Status-Shipped-brightgreen?style=flat-square)](https://github.com/sangamgautam1111/guru/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-Guru is an offline AI tutor for rural students in Nepal, powered by on-device LiteRT-LM (Gemma 2B) and RevenueCat.
+Guru is an offline AI tutor for rural students in Nepal, powered by on-device LiteRT-LM (Gemma 4 E2B) and RevenueCat.
 
 ![Guru Classroom Pilot in Nepal](assets/classroom_pilot.jpg)
 *Grade 10 students in rural Nepal learning with Guru offline AI in their classroom.*
@@ -83,7 +83,7 @@ Each $1 sponsorship funds the full setup on a parent's phone:
 - All official Class 10 CDC textbooks (Science, Math, Social, English, Nepali, Opt Math, Computer Science)
 - All 7 provinces SEE 2081 board question papers and answers
 - Chapter-by-chapter practice MCQs
-- The Gemma 2B AI tutor running right on the phone
+- The Gemma 4 E2B AI tutor running right on the phone
 
 Supporters can sponsor 1 student or use the counter to sponsor 3, 5, 10, or more students ($1 per student).
 
