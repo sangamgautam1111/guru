@@ -30,6 +30,9 @@ That gave me the clarity I needed. I'm 14, and I knew exactly what had to be bui
 
 That's how Guru started.
 
+![Grade 10 student studying Class 10 Science with Guru](assets/student_studying_offline.jpg)
+*Grade 10 student taking study notes on Science (Force & Gravity) while learning offline with Guru.*
+
 ## Demo Video
 
 Watch the 1:58 walkthrough running on a physical Android device:
