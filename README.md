@@ -37,6 +37,9 @@ Watch the 1:58 walkthrough running on a physical Android device:
 - **[Watch Guru Demo on YouTube (1:58)](https://youtu.be/pWdVwdpM14A?si=Ti_yTDg1_KZKW3tb)**
 - **[Teacher Feedback Video (MP4)](https://github.com/sangamgautam1111/guru/releases/download/v1.3.0/teacher_feedback.mp4)**: Real educator feedback on how Guru assists Grade 10 SEE students in rural Nepal.
 
+![Grade 10 Students Testing Guru](assets/student_testimonials_trio.jpg)
+*Grade 10 SEE students at Adarsha Secondary School sharing feedback on studying offline with Guru.*
+
 ## Features
 
 - **Ask by typing** - chat with Guru one-on-one about Science, Math, English, Nepali, Social Studies, Optional Math, or Computer Science and get step-by-step help
