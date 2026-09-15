@@ -62,11 +62,11 @@ src/
 
 ### 1. Progressive Learning (Never Lock Out a Student)
 In villages across Nepal, internet is slow and power cuts happen often. If the app forced students to download 2.5 GB of AI models before opening, many could never use it.
-- When you first open Guru, you can immediately read all Class 10 textbooks, practice chapter MCQs, and solve SEE board papers. Everything opens right away without waiting.
-- The 2.5 GB AI models (Gemma 2B and Whisper) are downloaded only when you want to use the AI chat tutor. Once downloaded, the AI works 100% offline forever.
+- When you first open Guru, you can immediately read all Class 10 textbooks and solve SEE board papers. Everything opens right away without waiting.
+- The 2.5 GB on-device AI models (Gemma 4 E2B and Whisper) are downloaded to power the AI tutor and chapter MCQs. Once downloaded, everything works 100% offline forever.
 
 ### 2. Built-in Science MCQ Practice (`src/data/quizPool.ts`)
-Instead of running heavy AI inference just to practice standard revision questions, Guru has a built-in question bank covering all 19 Class 10 science chapters. It loads instantly, scrambles the choices, gives immediate feedback, and explains why an answer is right.
+Guru features a question bank covering all 19 Class 10 science chapters. Once the model is ready, it scrambles the choices, gives immediate feedback, and explains why an answer is right.
 
 ### 3. Model Accuracy Disclaimer Banner (`src/screens/ChatModal.tsx`)
 Because on-device language models can occasionally make mistakes on complex problems, the top bar of the chat screen includes a clear reminder:

@@ -67,10 +67,10 @@ Download the latest release APK directly for Android:
 ## Setup
 
 1. **Install the APK**: Download and install `app-release.apk` on your Android device (Android 8.0+).
-2. **Start studying right away**: Open the app, type in your name, and you can immediately read textbooks, practice MCQs, or look at past papers. You don't have to wait for any big downloads to get started.
-3. **Download AI models when ready**: When you want to chat with Guru, tap "Chat with Guru" to download the Gemma and Whisper models (~2.5 GB). You'll see real-time download speed and progress.
+2. **Start studying right away**: Open the app, type in your name, and you can immediately read textbooks or look at past board papers. You don't have to wait for any big downloads to get started.
+3. **Download AI models when ready**: When you want to chat with Guru or practice Science MCQs, tap "Chat with Guru" or the MCQ generator to download the Gemma and Whisper models (~2.5 GB). You'll see real-time download speed and progress.
 4. **Grant permissions**: Allow camera and microphone access so you can take photos of textbook questions and speak into the mic.
-5. **Study offline**: You can turn on Airplane mode to test it. Once the model is on your device, asking questions, photo solving, voice questions, and all textbooks run right on your phone without needing any internet connection. If the model ever seems stuck on loading, tap "Clear Chat" and try asking once more.
+5. **Study offline**: You can turn on Airplane mode to test it. Once the model is on your device, asking questions, photo solving, voice questions, MCQs, and all textbooks run right on your phone without needing any internet connection. If the model ever seems stuck on loading, tap "Clear Chat" and try asking once more.
 
 ## RevenueCat Integration (Guru Dakshina)
 
