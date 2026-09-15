@@ -12,8 +12,6 @@ import {
   Folder,
   Calendar,
   Sparkles,
-  Lock,
-  Download,
   ArrowRight,
 } from 'lucide-react-native';
 import { UserProfile, SubjectItem, QuizQuestion, QuizStatus } from '../types';
@@ -206,12 +204,8 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       </View>
 
       {/* SCIENCE MCQ GENERATOR */}
-      <View style={[styles.quizCard, !isModelAvailable && { overflow: 'hidden' }]}>
-        <View
-          style={!isModelAvailable ? { opacity: 0.12 } : undefined}
-          pointerEvents={!isModelAvailable ? 'none' : 'auto'}
-        >
-          <View style={styles.quizHeaderRow}>
+      <View style={styles.quizCard}>
+        <View style={styles.quizHeaderRow}>
             <View style={styles.quizHeaderLeft}>
               <Sparkles size={17} color="#ffffff" />
               <Text style={styles.quizTitle}>Science MCQ Generator</Text>
@@ -360,34 +354,6 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             <Sparkles size={14} color="#ffffff" style={{ marginRight: 6 }} />
             <Text style={styles.newQuizButtonText}>Generate Next</Text>
           </TouchableOpacity>
-        </View>
-
-        {/* LOCKED OVERLAY (WHEN MODELS ARE NOT DOWNLOADED) */}
-        {!isModelAvailable && (
-          <View style={styles.mcqLockedOverlay}>
-            <TouchableOpacity
-              style={styles.mcqLockCircle}
-              onPress={onOpenAIChat}
-              activeOpacity={0.8}
-            >
-              <Lock size={26} color="#ffffff" />
-            </TouchableOpacity>
-
-            <Text style={styles.mcqLockedTitle}>AI MCQ Generator Locked</Text>
-            <Text style={styles.mcqLockedSubtitle}>
-              Generating dynamic Class 10 SEE exam MCQs requires on-device Gemma AI.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.mcqUnlockBtn}
-              onPress={onOpenAIChat}
-              activeOpacity={0.85}
-            >
-              <Download size={15} color="#000000" style={{ marginRight: 7 }} />
-              <Text style={styles.mcqUnlockBtnText}>Download Models to Unlock</Text>
-            </TouchableOpacity>
-          </View>
-        )}
       </View>
     </ScrollView>
   );
